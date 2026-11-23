@@ -1785,7 +1785,7 @@ export default function App() {
                                 {msg.role === "user" && msg.attachments && msg.attachments.length > 0 && (
                                   <p className="mt-2 text-xs text-white/75">Gambar terlampir: {msg.attachments.join(", ")}</p>
                                 )}
-                                {msg.role === "model" && (
+                                {msg.role === "model" && msg.dalil !== undefined && (
                                   <div className="mt-3 space-y-2">
                                     <h4 className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">Ibarat / Matan Arab dari Kitab</h4>
                                     {msg.dalil && msg.dalil.length > 0 ? msg.dalil.map((d, di) => (
