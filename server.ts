@@ -1890,8 +1890,8 @@ app.post("/api/chat-kitab", async (req, res) => {
   const taqriratFormatting = isTaqriratAlfiyah
     ? `\nInstruksi khusus Taqrirat Alfiyah:
   - "Qouluhu ..." (قوله) berarti "perkataan/ungkapan beliau ..."; lafaz setelahnya adalah petikan matan Alfiyah yang sedang diuraikan, bukan bait baru.
-  - Untuk setiap pertanyaan, usahakan menyertakan bait matan Alfiyah berbahasa Arab yang relevan, lalu jelaskan makna, susunan nahwu, dan kaidah yang dibahas. Bait matan adalah teks kitab, bukan otomatis dalil syar'i.
-  - Jika lafaz yang relevan tidak dapat dipastikan, jangan mengarang atau mengganti dengan bait yang tidak terkait. Kembalikan dalil sebagai array kosong, lalu minta pengguna mengirim lafaz atau foto halaman agar dapat ditahqiq.
+  - Untuk setiap pertanyaan, sertakan bait matan Alfiyah berbahasa Arab yang relevan bila Anda yakin redaksi baitnya, lalu jelaskan makna, susunan nahwu, dan kaidah yang dibahas. Bait matan adalah teks kitab, bukan otomatis dalil syar'i.
+  - Gunakan pengetahuan mapan tentang matan Alfiyah untuk memilih bait yang relevan; jangan mengarang, memparafrase sebagai kutipan, atau mengganti dengan bait yang tidak terkait. Jika tidak yakin baitnya, kembalikan dalil sebagai array kosong lalu minta pengguna mengirim lafaz atau foto halaman.
   - Perlakukan identitas sebagai edisi taqrirat yang dikaitkan dengan kajian Lirboyo; jangan mengarang nama penyusun taqrirat, isi halaman, atau klaim bahwa Anda memiliki naskah lengkap.`
     : "";
 
@@ -1904,9 +1904,9 @@ app.post("/api/chat-kitab", async (req, res) => {
     : ""}
 
   Keterbatasan sumber dan rujukan:
-  - Katalog aplikasi hanya menyediakan metadata dan ringkasan kitab, bukan naskah lengkap. Jangan mengklaim memiliki teks lengkap atau mengarang kutipan Arab, dalil, edisi, juz, bab, maupun nomor halaman.
-  - Untuk setiap kitab, usahakan tampilkan 1-3 ibarat/matan Arab langsung dari kitab terpilih yang relevan dengan pertanyaan. Untuk kitab nazam seperti Alfiyah, kutip bait nazam yang relevan dan tandai sebagai matan, bukan dalil syar'i. Untuk kitab hadits, kutip matan hadits; untuk kitab tafsir, bedakan ayat dari tafsir.
-  - Cantumkan kutipan hanya jika redaksi Arab dan keterkaitannya dengan kitab dapat dipastikan. Jangan mengarang teks hanya demi memenuhi permintaan. Jika tidak dapat dipastikan, kembalikan array dalil kosong dan jelaskan secara eksplisit dalam content bahwa ibarat Arab belum dapat diverifikasi; minta pengguna mengirim foto halaman/edisi kitab.
+  - Katalog aplikasi hanya menyediakan metadata dan ringkasan kitab, bukan naskah lengkap; jangan mengklaim telah memeriksa edisi atau halaman tertentu.
+  - Usahakan selalu menyertakan 1-3 ibarat/matan Arab langsung dari kitab terpilih yang relevan. Gunakan pengetahuan yang mapan tentang teks klasik dan pilih kutipan yang benar-benar dikenal, bukan dalil umum dari kitab lain. Untuk Alfiyah, tampilkan bait nahwu yang relevan sebagai matan; untuk kitab hadits tampilkan matan hadits; untuk kitab tafsir bedakan ayat dari tafsir.
+  - Kutip teks hanya jika Anda yakin terhadap redaksi Arab dan kitab asalnya. Jangan mengarang bait, matan, atau mengisi kutipan dengan teks perkiraan. Jika redaksi tidak Anda ketahui dengan yakin, kembalikan array dalil kosong dan minta foto halaman untuk verifikasi.
   - Nomor halaman hanya boleh dicantumkan jika tampak dan dapat dihubungkan dengan jelas ke edisi kitab yang dirujuk. Jika belum terverifikasi, katakan "nomor halaman belum terverifikasi" dan minta pengguna menyertakan edisi atau foto halaman kitab yang relevan.
   
   Santri/Pengguna menanyakan: "${latestUserMessage || "Mohon baca, terjemahkan bila perlu, dan kaji soal pada gambar yang dilampirkan."}".
