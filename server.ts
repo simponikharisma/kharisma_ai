@@ -1600,7 +1600,7 @@ app.post("/api/voice/speak", async (req, res) => {
   }
 
   const voice = "Charon";
-  const cacheKey = `${voice}:${cleanText.toLowerCase()}`;
+  const cacheKey = `arabic-aware-v2:${voice}:${cleanText.toLowerCase()}`;
   if (voiceCache.has(cacheKey)) {
     return res.json({ audioData: voiceCache.get(cacheKey) });
   }
@@ -1610,6 +1610,33 @@ app.post("/api/voice/speak", async (req, res) => {
   }
 
   try {
+    const arabicScript = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
+    const textSegments: { text: string; isArabic: boolean }[] = [];
+    for (const token of cleanText.match(/\s+|[^\s]+/gu) || [cleanText]) {
+      const previous = textSegments[textSegments.length - 1];
+      if (/^\s+$/u.test(token)) {
+        if (previous) previous.text += token;
+        else textSegments.push({ text: token, isArabic: false });
+        continue;
+      }
+
+      const isArabic = arabicScript.test(token);
+      if (previous?.isArabic === isArabic) previous.text += token;
+      else textSegments.push({ text: token, isArabic });
+    }
+    const content = textSegments
+      .filter((segment) => segment.text.trim().length > 0)
+      .map((segment) => ({
+        type: "text",
+        text: segment.text,
+        annotations: [{
+          type: "speech_metadata",
+          style: segment.isArabic
+            ? "Speak this exact text in clear, natural Modern Standard Arabic. Pronounce every Arabic word carefully and do not translate, skip, or paraphrase it."
+            : "Speak this exact text naturally in Indonesian."
+        }]
+      }));
+
     const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
       method: "POST",
       headers: {
@@ -1618,17 +1645,10 @@ app.post("/api/voice/speak", async (req, res) => {
       },
       signal: AbortSignal.timeout(AI_TIMEOUT_MS),
       body: JSON.stringify({
-        model: "gemini-3.8-flash-lite-tts",
+        model: "gemini-3.8-flash-tts",
         input: [{
           type: "user_input",
-          content: [{
-            type: "text",
-            text: cleanText,
-            annotations: [{
-              type: "speech_metadata",
-              style: "Natural, warm, clear male narrator with a calm medium-low register. Speak Indonesian naturally and pronounce any Arabic passages carefully with clear, accurate Arabic articulation."
-            }]
-          }]
+          content
         }],
         response_format: { type: "audio" },
         generation_config: {
