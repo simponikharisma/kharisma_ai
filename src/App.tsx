@@ -1785,15 +1785,20 @@ export default function App() {
                                 {msg.role === "user" && msg.attachments && msg.attachments.length > 0 && (
                                   <p className="mt-2 text-xs text-white/75">Gambar terlampir: {msg.attachments.join(", ")}</p>
                                 )}
-                                {msg.role === "model" && msg.dalil && msg.dalil.length > 0 && (
+                                {msg.role === "model" && (
                                   <div className="mt-3 space-y-2">
-                                    {msg.dalil.map((d, di) => (
+                                    <h4 className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">Ibarat / Matan Arab dari Kitab</h4>
+                                    {msg.dalil && msg.dalil.length > 0 ? msg.dalil.map((d, di) => (
                                       <div key={di} className="bg-amber-50/70 border border-gold-heritage/30 rounded-xl p-3">
                                         <p className="text-arabic text-[18px] sm:text-[20px] text-emerald-deep" dir="rtl" lang="ar">{d.teksArab}</p>
                                         <p className="text-[11px] sm:text-xs text-stone-600 italic mt-2">{d.terjemahan}</p>
                                         <p className="text-[10px] font-mono text-stone-500 mt-1">— {d.rujukan}</p>
                                       </div>
-                                    ))}
+                                    )) : (
+                                      <p className="text-xs text-stone-600 bg-stone-50 border border-stone-200 rounded-xl p-3">
+                                        Ibarat Arab belum dapat diverifikasi dari sumber yang tersedia. Agar tidak mengarang, kirim foto halaman atau teks kitab yang dimaksud.
+                                      </p>
+                                    )}
                                   </div>
                                 )}
                                 {msg.role === "model" && Boolean(msg.content?.trim()) && (
