@@ -468,6 +468,112 @@ const kitabCatalog = [
       { id: "bm-5", name: "Bab Peradilan: Gugatan Hak Milik, Saksi, & Harta Warisan", pages: "Fatawa Qadha" }
     ],
     tags: ["bughyah", "fatawa", "syafii", "bahtsul-masail", "pesantren", "hadhramaut", "kontemporer"]
+  },
+  {
+    id: "at-tibyan",
+    title: "At-Tibyan fi Adabi Hamalatil Qur'an",
+    author: "Imam Abu Zakariya Yahya bin Syaraf An-Nawawi",
+    category: "Ulumul Qur'an & Adab",
+    madzhab: "Syafii",
+    era: "Abad ke-7 Hijriah",
+    difficulty: "Menengah",
+    description: "Kitab Imam An-Nawawi tentang adab berinteraksi dengan Al-Qur'an, bagi pembaca, pengajar, dan penuntut ilmu.",
+    summary: "At-Tibyan membahas keutamaan membaca dan mempelajari Al-Qur'an, adab tilawah, penghormatan terhadap mushaf, serta etika guru dan murid dalam pengajaran Al-Qur'an. Kitab ini juga menguraikan adab para penghafal dan pembaca Al-Qur'an.",
+    chapters: [
+      { id: "tibyan-1", name: "Keutamaan Membaca dan Mempelajari Al-Qur'an", pages: "Bagian awal" },
+      { id: "tibyan-2", name: "Adab Guru dan Penuntut Ilmu Al-Qur'an", pages: "Pembahasan adab pengajaran" },
+      { id: "tibyan-3", name: "Adab Membaca, Membawa, dan Memuliakan Mushaf", pages: "Pembahasan tilawah" },
+      { id: "tibyan-4", name: "Adab Berbagai Golongan Pembaca Al-Qur'an", pages: "Bagian akhir" }
+    ],
+    tags: ["at-tibyan", "an-nawawi", "ulumul-quran", "adab", "tilawah"]
+  },
+  {
+    id: "syarah-tijan",
+    title: "Tijan ad-Darari fi Syarh Risalah al-Bajuri",
+    author: "Syekh Ibrahim al-Bajuri",
+    category: "Aqidah & Ilmu Tauhid",
+    madzhab: "Asy'ari",
+    era: "Abad ke-13 Hijriah",
+    difficulty: "Menengah",
+    description: "Syarah ringkas Syekh Ibrahim al-Bajuri atas risalah tauhidnya, yang banyak dipelajari dalam tradisi pesantren.",
+    summary: "Tijan ad-Darari menjelaskan dasar-dasar akidah Islam, termasuk sifat-sifat wajib, mustahil, dan jaiz bagi Allah dan para rasul. Uraiannya mengenalkan pokok-pokok tauhid dalam tradisi Ahlussunnah wal Jama'ah.",
+    chapters: [
+      { id: "tijan-1", name: "Pengantar Ilmu Tauhid dan Hukum Akal", pages: "Muqaddimah" },
+      { id: "tijan-2", name: "Sifat-Sifat Wajib, Mustahil, dan Jaiz bagi Allah", pages: "Pembahasan sifat ketuhanan" },
+      { id: "tijan-3", name: "Sifat-Sifat Wajib, Mustahil, dan Jaiz bagi Para Rasul", pages: "Pembahasan sifat kenabian" },
+      { id: "tijan-4", name: "Pokok-Pokok Keimanan", pages: "Bagian akhir" }
+    ],
+    tags: ["tijan", "tijan-ad-darari", "bajuri", "aqidah", "tauhid", "asyari"]
+  },
+  {
+    id: "jawahirul-bukhari",
+    title: "Jawahir al-Bukhari",
+    author: "Musthafa Muhammad Imarah",
+    category: "Hadits & Syarah",
+    madzhab: "Umum",
+    era: "Kontemporer",
+    difficulty: "Menengah",
+    description: "Himpunan pilihan hadits dari Shahih al-Bukhari yang disusun untuk memudahkan pembelajaran dan pengambilan faedah.",
+    summary: "Jawahir al-Bukhari menghimpun hadits-hadits pilihan dari Shahih al-Bukhari dalam tema keimanan, ibadah, akhlak, dan kehidupan sosial. Penyajiannya membantu pembaca mengenal kandungan hadits dan pelajaran praktisnya.",
+    chapters: [
+      { id: "jawahir-1", name: "Hadits-Hadits Keimanan dan Ilmu", pages: "Bagian tematik" },
+      { id: "jawahir-2", name: "Hadits-Hadits Ibadah", pages: "Bagian tematik" },
+      { id: "jawahir-3", name: "Hadits-Hadits Akhlak dan Adab", pages: "Bagian tematik" },
+      { id: "jawahir-4", name: "Hadits-Hadits Muamalah dan Kehidupan Sosial", pages: "Bagian tematik" }
+    ],
+    tags: ["jawahirul-bukhari", "hadits", "bukhari", "syarah"]
+  },
+  {
+    id: "al-baiquniyah",
+    title: "Al-Manzumah al-Baiquniyah",
+    author: "Syekh Umar bin Muhammad al-Baiquni",
+    category: "Musthalah Hadits",
+    madzhab: "Umum",
+    era: "Abad ke-11 Hijriah",
+    difficulty: "Pemula",
+    description: "Nazam ringkas yang mengenalkan istilah dan pembagian ilmu hadits, lazim dipelajari sebagai pengantar musthalah hadits.",
+    summary: "Al-Baiquniyah merangkum sejumlah istilah dasar dalam ilmu hadits, seperti hadits sahih, hasan, dhaif, mursal, musalsal, dan jenis-jenis riwayat lainnya. Bentuk nazamnya membantu pemula menghafal dan memahami klasifikasi hadits.",
+    chapters: [
+      { id: "baiquni-1", name: "Pengantar dan Pembagian Dasar Hadits", pages: "Awal nazam" },
+      { id: "baiquni-2", name: "Jenis Hadits Berdasarkan Kualitas dan Sanad", pages: "Bagian tengah nazam" },
+      { id: "baiquni-3", name: "Jenis Riwayat dan Istilah Musthalah Lainnya", pages: "Bagian akhir nazam" }
+    ],
+    tags: ["baiquniyah", "musthalah-hadits", "hadits", "nazam", "pemula"]
+  },
+  {
+    id: "faraidul-bahiyah",
+    title: "Al-Faraid al-Bahiyyah fi al-Qawa'id al-Fiqhiyyah",
+    author: "Syekh Abu Bakr al-Ahdal",
+    category: "Qawaid Fiqhiyyah",
+    madzhab: "Syafii",
+    era: "Abad ke-10 Hijriah",
+    difficulty: "Menengah",
+    description: "Nazam kaidah-kaidah fikih yang digunakan sebagai pengantar untuk memahami prinsip umum dalam penetapan hukum.",
+    summary: "Al-Faraid al-Bahiyyah merangkum kaidah fikih beserta cabang dan penerapannya. Pembahasannya membantu pelajar memahami prinsip seperti keyakinan tidak hilang karena keraguan, kesulitan mendatangkan kemudahan, dan kebiasaan dapat menjadi pertimbangan hukum.",
+    chapters: [
+      { id: "faraid-1", name: "Kaidah-Kaidah Fikih Pokok", pages: "Bagian awal nazam" },
+      { id: "faraid-2", name: "Kaidah Cabang dan Penerapannya", pages: "Bagian tengah nazam" },
+      { id: "faraid-3", name: "Pengecualian dan Penutup", pages: "Bagian akhir nazam" }
+    ],
+    tags: ["faraidul-bahiyah", "qawaid-fiqhiyyah", "fiqh", "syafii", "nazam"]
+  },
+  {
+    id: "minhajul-abidin",
+    title: "Minhaj al-Abidin ila Jannati Rabbil Alamin",
+    author: "Hujjatul Islam Imam Abu Hamid Muhammad al-Ghazali",
+    category: "Tasawwuf & Tazkiyatun Nafs",
+    madzhab: "Syafii",
+    era: "Abad ke-5 Hijriah",
+    difficulty: "Menengah - Tinggi",
+    description: "Karya Imam al-Ghazali yang membimbing perjalanan seorang hamba dalam beribadah dan mendekatkan diri kepada Allah.",
+    summary: "Minhaj al-Abidin menguraikan perjalanan ibadah melalui tahapan-tahapan yang perlu ditempuh, mulai dari ilmu dan taubat hingga menghadapi penghalang, godaan, serta hal-hal yang merusak amal. Kitab ini menekankan kesungguhan beribadah, penjagaan hati, dan syukur kepada Allah.",
+    chapters: [
+      { id: "minhaj-1", name: "Ilmu dan Taubat", pages: "Tahapan awal" },
+      { id: "minhaj-2", name: "Penghalang dan Godaan dalam Ibadah", pages: "Tahapan perjalanan" },
+      { id: "minhaj-3", name: "Pendorong Ketaatan dan Perusak Amal", pages: "Tahapan perjalanan" },
+      { id: "minhaj-4", name: "Syukur dan Penyempurnaan Penghambaan", pages: "Tahapan akhir" }
+    ],
+    tags: ["minhajul-abidin", "ghazali", "tasawwuf", "tazkiyah", "ibadah"]
   }
 ];
 
