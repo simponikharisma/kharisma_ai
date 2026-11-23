@@ -1578,19 +1578,18 @@ app.post("/api/chat-kitab", async (req, res) => {
   }
 });
 
-// In-memory cache for audio voice synthesis
+// In-memory cache for generated speech audio
 const voiceCache = new Map<string, string>();
 
-// Endpoint 6: Human-like Indonesian Voice Generator (Gemini Flash Lite TTS)
+// Endpoint 6: Gemini TTS with a consistent male narrator and Arabic support
 app.post("/api/voice/speak", async (req, res) => {
   const { text } = req.body;
   if (!text || String(text).trim().length === 0) {
     return res.status(400).json({ error: "Teks tidak boleh kosong." });
   }
 
-  // Clean text: strip Arabic glyphs (which can degrade Indonesian TTS), markdown symbols, and keep concise
+  // Keep Arabic characters intact so the speech model can pronounce them.
   const cleanText = String(text)
-    .replace(/[\u0600-\u06FF]/g, "")
     .replace(/[*_#`~]/g, "")
     .replace(/\s+/g, " ")
     .trim()
@@ -1600,32 +1599,58 @@ app.post("/api/voice/speak", async (req, res) => {
     return res.status(400).json({ error: "Teks tidak valid untuk disuarakan." });
   }
 
-  const cacheKey = cleanText.toLowerCase();
+  const voice = "Charon";
+  const cacheKey = `${voice}:${cleanText.toLowerCase()}`;
   if (voiceCache.has(cacheKey)) {
     return res.json({ audioData: voiceCache.get(cacheKey) });
   }
 
-  if (!ai) {
-    return res.status(503).json({ error: "Layanan suara belum siap, gunakan browser audio." });
+  if (!ai || !geminiApiKey) {
+    return res.status(503).json({ error: "Suara AI belum tersedia. Pastikan GEMINI_API_KEY sudah diatur." });
   }
 
   try {
-    const ttsPromise = ai.models.generateContent({
-      model: "gemini-3.8-flash-lite-tts",
-      contents: cleanText,
+    const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": geminiApiKey
+      },
+      signal: AbortSignal.timeout(AI_TIMEOUT_MS),
+      body: JSON.stringify({
+        model: "gemini-3.8-flash-lite-tts",
+        input: [{
+          type: "user_input",
+          content: [{
+            type: "text",
+            text: cleanText,
+            annotations: [{
+              type: "speech_metadata",
+              style: "Natural, warm, clear male narrator with a calm medium-low register. Speak Indonesian naturally and pronounce any Arabic passages carefully with clear, accurate Arabic articulation."
+            }]
+          }]
+        }],
+        response_format: { type: "audio" },
+        generation_config: {
+          speech_config: [{ voice }]
+        }
+      })
     });
 
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`Voice generation timeout exceeded ${AI_TIMEOUT_MS / 1000}s`)), AI_TIMEOUT_MS)
-    );
+    const result = await response.json() as any;
+    if (!response.ok) {
+      throw new Error(result?.error?.message || `Gemini TTS request failed with status ${response.status}`);
+    }
 
-    const response = (await Promise.race([ttsPromise, timeoutPromise])) as any;
-    const part = response?.candidates?.[0]?.content?.parts?.[0];
-    const base64Audio = part?.inlineData?.data;
-    const mimeType = part?.inlineData?.mimeType || "audio/wav";
+    const audioPart = result?.steps
+      ?.flatMap((step: any) => step.content || [])
+      .reverse()
+      .find((content: any) => content.type === "audio" && content.data);
+    const base64Audio = audioPart?.data;
+    const mimeType = audioPart?.mime_type || "audio/wav";
 
     if (!base64Audio) {
-      throw new Error("Data audio kosong dari model.");
+      throw new Error("Gemini TTS response did not contain audio data.");
     }
 
     const dataUri = `data:${mimeType};base64,${base64Audio}`;
@@ -1634,7 +1659,10 @@ app.post("/api/voice/speak", async (req, res) => {
 
     return res.json({ audioData: dataUri });
   } catch (err: any) {
-    console.warn("Gemini TTS fallback trigger:", err?.status || err?.code || "", err?.message || err);
-    return res.status(500).json({ error: "Gagal membuat audio, gunakan fallback lokal." });
+    console.warn("Gemini TTS failed:", err?.status || err?.code || "", err?.message || err);
+    const timedOut = err?.name === "TimeoutError" || err?.name === "AbortError";
+    return res.status(timedOut ? 504 : 502).json({
+      error: timedOut ? "Pembuatan suara melewati batas waktu. Silakan coba lagi." : "Suara manusia belum berhasil dibuat. Silakan coba lagi."
+    });
   }
 });
