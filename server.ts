@@ -1,6 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
 import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 dotenv.config();
 
@@ -10,6 +11,114 @@ const AI_MODEL = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
 const AI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS) || 90000;
 
 app.use(express.json());
+app.use("/api", (_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  next();
+});
+
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+const AUTH_SECRET = process.env.AUTH_SECRET;
+const AUTH_SESSION_COOKIE = "kharisma_admin_session";
+const AUTH_SESSION_TTL_SECONDS = 60 * 60 * 8;
+
+function isAuthConfigured() {
+  return Boolean(
+    ADMIN_USERNAME &&
+    ADMIN_PASSWORD &&
+    ADMIN_PASSWORD.length >= 12 &&
+    AUTH_SECRET &&
+    AUTH_SECRET.length >= 32
+  );
+}
+
+function safeStringEquals(left: string, right: string) {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function signAuthSession(payload: string, secret: string) {
+  return createHmac("sha256", secret).update(payload).digest("base64url");
+}
+
+function getAuthSessionToken(req: express.Request) {
+  const cookies = req.headers.cookie?.split(";") || [];
+  const cookie = cookies.find((item) => item.trim().startsWith(`${AUTH_SESSION_COOKIE}=`));
+  return cookie?.trim().slice(AUTH_SESSION_COOKIE.length + 1);
+}
+
+function isValidAuthSession(req: express.Request) {
+  if (!isAuthConfigured() || !AUTH_SECRET || !ADMIN_USERNAME) return false;
+  const token = getAuthSessionToken(req);
+  if (!token) return false;
+
+  const [payload, signature, extra] = token.split(".");
+  if (!payload || !signature || extra) return false;
+
+  try {
+    if (!safeStringEquals(signature, signAuthSession(payload, AUTH_SECRET))) return false;
+    const session = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    return session.username === ADMIN_USERNAME && Number(session.expiresAt) > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+function setAuthSessionCookie(req: express.Request, res: express.Response, value: string, maxAge: number) {
+  const forwardedProtocol = req.get("x-forwarded-proto")?.split(",")[0].trim();
+  const secure = req.secure || forwardedProtocol === "https";
+  res.setHeader(
+    "Set-Cookie",
+    `${AUTH_SESSION_COOKIE}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure ? "; Secure" : ""}`
+  );
+}
+
+app.post("/api/auth/login", (req, res) => {
+  if (!isAuthConfigured() || !ADMIN_USERNAME || !ADMIN_PASSWORD || !AUTH_SECRET) {
+    return res.status(503).json({
+      error: "Login belum dikonfigurasi. Admin perlu mengatur ADMIN_USERNAME, ADMIN_PASSWORD (minimal 12 karakter), dan AUTH_SECRET (minimal 32 karakter)."
+    });
+  }
+
+  const username = typeof req.body?.username === "string" ? req.body.username : "";
+  const password = typeof req.body?.password === "string" ? req.body.password : "";
+  if (!username || !password) {
+    return res.status(400).json({ error: "Nama pengguna dan kata sandi wajib diisi." });
+  }
+
+  if (!safeStringEquals(username, ADMIN_USERNAME) || !safeStringEquals(password, ADMIN_PASSWORD)) {
+    return res.status(401).json({ error: "Nama pengguna atau kata sandi salah." });
+  }
+
+  const payload = Buffer.from(JSON.stringify({
+    username: ADMIN_USERNAME,
+    expiresAt: Date.now() + AUTH_SESSION_TTL_SECONDS * 1000
+  })).toString("base64url");
+  const token = `${payload}.${signAuthSession(payload, AUTH_SECRET)}`;
+  setAuthSessionCookie(req, res, token, AUTH_SESSION_TTL_SECONDS);
+  return res.json({ authenticated: true });
+});
+
+app.get("/api/auth/session", (req, res) => {
+  if (!isAuthConfigured()) {
+    return res.status(503).json({
+      authenticated: false,
+      error: "Login belum dikonfigurasi. Admin perlu mengatur ADMIN_USERNAME, ADMIN_PASSWORD (minimal 12 karakter), dan AUTH_SECRET (minimal 32 karakter)."
+    });
+  }
+  return res.json({ authenticated: isValidAuthSession(req) });
+});
+
+app.post("/api/auth/logout", (req, res) => {
+  setAuthSessionCookie(req, res, "", 0);
+  return res.json({ authenticated: false });
+});
+
+app.use("/api", (req, res, next) => {
+  if (isValidAuthSession(req)) return next();
+  return res.status(401).json({ error: "Silakan masuk untuk menggunakan aplikasi." });
+});
 
 // Initialize Gemini SDK with telemetry header
 const geminiApiKey = process.env.GEMINI_API_KEY;
