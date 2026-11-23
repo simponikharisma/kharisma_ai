@@ -243,7 +243,7 @@ export default function App() {
   const [kamus, setKamus] = useState<Record<string, KamusEntryData>>({});
   const [searchKamusTerm, setSearchKamusTerm] = useState("");
   const [customTerm, setCustomTerm] = useState("");
-  const [translateMode, setTranslateMode] = useState<"auto" | "pegon-indo" | "arab-indo" | "istilah">("auto");
+  const [translateMode, setTranslateMode] = useState<"auto" | "pegon-indo" | "arab-indo" | "istilah" | "terjemah">("auto");
   const [kamusCategoryFilter, setKamusCategoryFilter] = useState<"semua" | "pegon" | "arab" | "istilah">("semua");
   const [isKamusLoading, setIsKamusLoading] = useState(true);
   const [isExplainingTerm, setIsExplainingTerm] = useState(false);
@@ -1757,69 +1757,69 @@ export default function App() {
                 </div>
 
                 <p className="text-xs text-stone-600 mb-4 leading-relaxed">
-                  Mampu menerjemahkan makna gandul pesantren (seperti <span className="font-semibold text-emerald-800">"nanging"</span> ➔ akan tetapi, <span className="font-semibold text-emerald-800">"utawi"</span> ➔ adapun, <span className="font-semibold text-emerald-800">"hale"</span> ➔ dalam keadaan/hal), serta kosa kata teks Arab klasik ke bahasa Indonesia lengkap dengan tarkib nahwu/sharaf.
+                  Pilih <strong>Terjemahan saja</strong> untuk hasil bahasa Indonesia tanpa uraian. Pilihan lainnya memberikan terjemahan beserta kaidah dan konteks Pegon, Arab, atau fikih.
                 </p>
 
                 {/* Translation Mode Selector */}
                 <div className="mb-3">
                   <label className="text-[11px] font-semibold text-stone-500 block mb-1.5 uppercase tracking-wide">
-                    Mode Penerjemahan:
+                    Pilih jenis hasil:
                   </label>
                   <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 p-1 bg-stone-100 rounded-xl text-[11px]">
                     <button
                       type="button"
                       onClick={() => setTranslateMode("auto")}
-                      className={`py-1.5 px-2 rounded-lg font-medium transition text-center truncate ${
+                      className={`min-h-9 py-1.5 px-2 rounded-lg font-medium transition text-center whitespace-normal leading-tight ${
                         translateMode === "auto"
                           ? "bg-white text-emerald-deep font-bold shadow-sm border border-stone-200"
                           : "text-stone-600 hover:text-emerald-deep"
                       }`}
                     >
-                      Otomatis
+                      Otomatis + kaidah
                     </button>
                     <button
                       type="button"
                       onClick={() => setTranslateMode("pegon-indo")}
-                      className={`py-1.5 px-2 rounded-lg font-medium transition text-center truncate ${
+                      className={`min-h-9 py-1.5 px-2 rounded-lg font-medium transition text-center whitespace-normal leading-tight ${
                         translateMode === "pegon-indo"
                           ? "bg-emerald-deep text-white font-bold shadow-sm"
                           : "text-stone-600 hover:text-emerald-deep"
                       }`}
                     >
-                      Pegon ➔ Indo
+                      Pegon + kaidah
                     </button>
                     <button
                       type="button"
                       onClick={() => setTranslateMode("arab-indo")}
-                      className={`py-1.5 px-2 rounded-lg font-medium transition text-center truncate ${
+                      className={`min-h-9 py-1.5 px-2 rounded-lg font-medium transition text-center whitespace-normal leading-tight ${
                         translateMode === "arab-indo"
                           ? "bg-emerald-deep text-white font-bold shadow-sm"
                           : "text-stone-600 hover:text-emerald-deep"
                       }`}
                     >
-                      Arab ➔ Indo
+                      Arab + kaidah
                     </button>
                     <button
                       type="button"
                       onClick={() => setTranslateMode("istilah")}
-                      className={`py-1.5 px-2 rounded-lg font-medium transition text-center truncate ${
+                      className={`min-h-9 py-1.5 px-2 rounded-lg font-medium transition text-center whitespace-normal leading-tight ${
                         translateMode === "istilah"
                           ? "bg-emerald-deep text-white font-bold shadow-sm"
                           : "text-stone-600 hover:text-emerald-deep"
                       }`}
                     >
-                      Kaidah Fikih
+                      Istilah fikih
                     </button>
                     <button
                       type="button"
                       onClick={() => setTranslateMode("terjemah")}
-                      className={`py-1.5 px-2 rounded-lg font-medium transition text-center truncate ${
+                      className={`min-h-9 py-1.5 px-2 rounded-lg font-medium transition text-center whitespace-normal leading-tight ${
                         translateMode === "terjemah"
                           ? "bg-emerald-deep text-white font-bold shadow-sm"
                           : "text-stone-600 hover:text-emerald-deep"
                       }`}
                     >
-                      Terjemahan Langsung
+                      Terjemahan saja
                     </button>
                   </div>
                 </div>
@@ -1828,7 +1828,7 @@ export default function App() {
                 <form onSubmit={(e) => explainCustomTerm(e)} className="flex flex-col gap-3">
                   <div>
                     <label className="text-xs sm:text-sm font-semibold text-stone-700 block mb-1">
-                      Ketik Kata / Istilah yang Mau Diterjemahkan
+                      Teks yang ingin diterjemahkan
                     </label>
                     <div className="relative">
                       <input
@@ -1843,7 +1843,7 @@ export default function App() {
                             ? "Ketik kata Arab / turath (contoh: استحسان, معفو عنه, قاول معتمد)..."
                               : translateMode === "terjemah"
                               ? "Ketik teks Arab atau Pegon untuk diterjemahkan ke Indonesia..."
-                              : "Ketik kata: nanging, utawi, istihsan, qaul mu'tamad..."
+                              : "Masukkan teks Arab, Pegon, atau istilah fikih..."
                         }
                         className="w-full text-base p-3.5 pr-10 rounded-xl border border-stone-300 outline-none focus:ring-2 focus:ring-emerald-deep/20 focus:border-emerald-deep bg-stone-50/60"
                       />
@@ -1862,7 +1862,7 @@ export default function App() {
                   {/* Preset chips for fast testing */}
                   <div>
                     <p className="text-[11px] text-stone-600 font-semibold mb-1.5 uppercase tracking-wide">
-                      Pilihan Cepat Makna Pegon & Turath:
+                      Contoh kata Pegon & Arab (mode kaidah):
                     </p>
                     <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pr-1">
                       {KAMUS_PRESETS.map((preset) => (
@@ -1925,7 +1925,11 @@ export default function App() {
                   className="p-5 sm:p-7 bg-white border-2 border-gold-heritage/40 rounded-2xl shadow-lg relative parchment-glow overflow-hidden"
                 >
                   <div className="absolute top-0 right-0 py-1 px-3 bg-gradient-to-l from-gold-heritage to-amber-500 text-emerald-deep text-[10px] font-mono font-bold rounded-bl-xl uppercase tracking-wider shadow-sm">
-                    {kamusResponse.mode === "terjemah" ? "Terjemahan Langsung" : kamusResponse.kategori || "Hasil Terjemah KHARISMA"}
+                    {kamusResponse.mode === "terjemah"
+                      ? "Terjemahan saja"
+                      : kamusResponse.mode === "istilah"
+                      ? "Terjemahan + penjelasan fikih"
+                      : "Terjemahan + kaidah"}
                   </div>
 
                   <div className="flex items-start justify-between gap-3 mb-2 pt-1">
