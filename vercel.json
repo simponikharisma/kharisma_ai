@@ -9,6 +9,15 @@
     },
     "api/voice/speak.ts": {
       "includeFiles": "server.ts"
+    },
+    "api/auth/login.ts": {
+      "includeFiles": "server.ts"
+    },
+    "api/auth/session.ts": {
+      "includeFiles": "server.ts"
+    },
+    "api/auth/logout.ts": {
+      "includeFiles": "server.ts"
     }
   }
 }
