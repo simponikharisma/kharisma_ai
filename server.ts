@@ -1887,6 +1887,15 @@ app.post("/api/chat-kitab", async (req, res) => {
   - Pertahankan format ini pada setiap kutipan Arab agar pembaca dapat membedakan ayat dan tafsir dengan jelas.`
     : "";
   const isTaqriratAlfiyah = selectedKitab?.id === "taqrirat-alfiyah-lirboyo";
+  const isNazamKitab = Boolean(
+    selectedKitab && (
+      selectedKitab.id.includes("alfiyah") ||
+      selectedKitab.tags?.some((tag: string) => ["nazam", "nadhom", "syair", "alfiyah"].includes(tag.toLowerCase()))
+    )
+  );
+  const kitabReferenceType = isNazamKitab
+    ? "Untuk kitab berbentuk nadham, cantumkan nomor bait (bait ke-...) bila dapat dipastikan, bukan nomor halaman."
+    : "Cantumkan rujukan bab; nomor halaman hanya boleh dipakai jika edisi/cetakan kitabnya teridentifikasi.";
   const taqriratFormatting = isTaqriratAlfiyah
     ? `\nInstruksi khusus Taqrirat Alfiyah:
   - "Qouluhu ..." (قوله) berarti "perkataan/ungkapan beliau ..."; lafaz setelahnya adalah petikan matan Alfiyah yang sedang diuraikan, bukan bait baru.
@@ -1907,7 +1916,9 @@ app.post("/api/chat-kitab", async (req, res) => {
   - Katalog aplikasi hanya menyediakan metadata dan ringkasan kitab, bukan naskah lengkap; jangan mengklaim telah memeriksa edisi atau halaman tertentu.
   - Usahakan selalu menyertakan 1-3 ibarat/matan Arab langsung dari kitab terpilih yang relevan. Gunakan pengetahuan yang mapan tentang teks klasik dan pilih kutipan yang benar-benar dikenal, bukan dalil umum dari kitab lain. Untuk Alfiyah, tampilkan bait nahwu yang relevan sebagai matan; untuk kitab hadits tampilkan matan hadits; untuk kitab tafsir bedakan ayat dari tafsir.
   - Kutip teks hanya jika Anda yakin terhadap redaksi Arab dan kitab asalnya. Jangan mengarang bait, matan, atau mengisi kutipan dengan teks perkiraan. Jika redaksi tidak Anda ketahui dengan yakin, kembalikan array dalil kosong dan minta foto halaman untuk verifikasi.
-  - Nomor halaman hanya boleh dicantumkan jika tampak dan dapat dihubungkan dengan jelas ke edisi kitab yang dirujuk. Jika belum terverifikasi, katakan "nomor halaman belum terverifikasi" dan minta pengguna menyertakan edisi atau foto halaman kitab yang relevan.
+  - Untuk kitab berbentuk nadham, gunakan nomor bait sebagai rujukan utama, bukan nomor halaman. Jangan menebak nomor bait; jika tidak diketahui, cukup sebut bab/tema tanpa nomor bait.
+  - Untuk kitab selain nadham, jangan mencantumkan nomor halaman tanpa identifikasi cetakan/edisi. Halaman hanya boleh dicantumkan jika nomor halaman dan identitas cetakan/edisi tampak jelas pada gambar atau diberikan pengguna; tulis nomor halaman bersama nama penerbit/cetakan/tahun edisi yang teridentifikasi. Jika edisi tidak diketahui, rujuk bab saja.
+  - Jangan menyebut "halaman belum terverifikasi" pada setiap jawaban. Hilangkan nomor halaman jika tidak ada edisi yang cocok; minta edisi hanya bila pengguna meminta nomor halaman.
   
   Santri/Pengguna menanyakan: "${latestUserMessage || "Mohon baca, terjemahkan bila perlu, dan kaji soal pada gambar yang dilampirkan."}".
   
@@ -1915,8 +1926,8 @@ app.post("/api/chat-kitab", async (req, res) => {
   ${conversationHistory}
   
   ${isTaqriratAlfiyah
-    ? "Tugas: jawab dengan penjelasan ringkas dalam content dan sertakan bait Alfiyah yang relevan pada dalil bila redaksinya dapat dipastikan. Jelaskan bait sebagai matan, bukan dalil syar'i. Jangan menulis salam atau pengantar panjang."
-    : "Tugas: jawab dengan penjelasan ringkas dalam content dan sertakan 1-3 ibarat Arab dari kitab terpilih yang relevan pada dalil bila redaksi dan sumbernya dapat dipastikan. Untuk kitab selain Alfiyah, berikan teks kitab/hadits/ayat yang memang menjadi bahan kitab, bukan dalil umum yang tidak terkait. Jangan menulis salam atau pengantar panjang."}`;
+    ? `Tugas: jawab dengan penjelasan ringkas dalam content dan sertakan bait Alfiyah yang relevan pada dalil bila redaksinya dapat dipastikan. Jelaskan bait sebagai matan, bukan dalil syar'i. Cantumkan nomor bait bila diketahui; jangan gunakan nomor halaman sebagai pengganti nomor bait. ${kitabReferenceType} Jangan menulis salam atau pengantar panjang.`
+    : `Tugas: jawab dengan penjelasan ringkas dalam content dan sertakan 1-3 ibarat Arab dari kitab terpilih yang relevan pada dalil bila redaksi dan sumbernya dapat dipastikan. Untuk kitab selain Alfiyah, berikan teks kitab/hadits/ayat yang memang menjadi bahan kitab, bukan dalil umum yang tidak terkait. ${kitabReferenceType} Jika nomor halaman diberikan, sertakan pula identitas cetakan/edisinya yang dapat diverifikasi. Jangan menulis salam atau pengantar panjang.`}`;
 
   try {
     const generatePromise = ai.models.generateContent({
@@ -1946,8 +1957,8 @@ app.post("/api/chat-kitab", async (req, res) => {
             dalil: {
               type: Type.ARRAY,
               description: isTaqriratAlfiyah
-                ? "Bait matan Alfiyah berbahasa Arab yang relevan, terjemahannya, dan rujukan. Bait ini adalah matan kaidah nahwu, bukan otomatis dalil syar'i. Gunakan array kosong hanya jika teks tidak dapat dipastikan."
-                : "Ibarat/matan Arab langsung dari kitab yang dipilih, relevan dengan pertanyaan, beserta terjemahan dan rujukan. Gunakan array kosong hanya jika teks sumber tidak dapat dipastikan; jangan menggantinya dengan kutipan kitab lain.",
+                ? "Bait matan Alfiyah berbahasa Arab yang relevan, terjemahannya, dan rujukan. Bait ini adalah matan kaidah nahwu, bukan otomatis dalil syar'i. Cantumkan nomor bait hanya jika diketahui. Gunakan array kosong hanya jika teks tidak dapat dipastikan."
+                : `Ibarat/matan Arab langsung dari kitab yang dipilih, relevan dengan pertanyaan, beserta terjemahan dan rujukan. ${kitabReferenceType} Jika mencantumkan halaman, identifikasi cetakan/edisi. Gunakan array kosong hanya jika teks sumber tidak dapat dipastikan; jangan menggantinya dengan kutipan kitab lain.`,
               items: {
                 type: Type.OBJECT,
                 properties: {
@@ -1963,7 +1974,7 @@ app.post("/api/chat-kitab", async (req, res) => {
                   },
                   rujukan: {
                     type: Type.STRING,
-                    description: "Nama kitab dan bab yang tepat; cantumkan juz/halaman hanya jika dapat diverifikasi. Sebutkan bila nomor halaman belum terverifikasi."
+                    description: `Nama kitab dan bab yang tepat; ${kitabReferenceType} Halaman wajib disertai identitas cetakan/edisi, dan nomor bait hanya bila dapat dipastikan.`
                   }
                 },
                 required: ["teksArab", "terjemahan", "rujukan"]
