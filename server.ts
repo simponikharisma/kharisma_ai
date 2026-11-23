@@ -10,7 +10,7 @@ export default app;
 const AI_MODEL = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
 const AI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS) || 90000;
 
-app.use(express.json());
+app.use(express.json({ limit: "4mb" }));
 app.use("/api", (_req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
   next();
@@ -574,8 +574,94 @@ const kitabCatalog = [
       { id: "minhaj-4", name: "Syukur dan Penyempurnaan Penghambaan", pages: "Tahapan akhir" }
     ],
     tags: ["minhajul-abidin", "ghazali", "tasawwuf", "tazkiyah", "ibadah"]
+  },
+  {
+    id: "bidayatul-hidayah",
+    title: "Bidayatul Hidayah",
+    author: "Hujjatul Islam Imam Abu Hamid Muhammad al-Ghazali",
+    category: "Tasawwuf & Adab",
+    madzhab: "Syafii",
+    era: "Abad ke-5 Hijriah",
+    difficulty: "Pemula - Menengah",
+    description: "Panduan Imam al-Ghazali mengenai adab menuntut ilmu dan amalan keseharian untuk memulai perjalanan menuju hidayah Allah.",
+    summary: "Bidayatul Hidayah membimbing pembaca melalui adab bangun tidur, bersuci, ibadah, dan rutinitas harian. Kitab ini juga mengajarkan penjagaan anggota badan dari maksiat, adab pergaulan, serta tata cara menempuh jalan menuju ketaatan.",
+    chapters: [
+      { id: "bidayah-1", name: "Adab Bangun Tidur, Bersuci, dan Persiapan Ibadah", pages: "Bagian awal" },
+      { id: "bidayah-2", name: "Amalan dan Adab Keseharian", pages: "Bagian amalan" },
+      { id: "bidayah-3", name: "Menjaga Anggota Badan dari Maksiat", pages: "Bagian penjagaan diri" },
+      { id: "bidayah-4", name: "Adab Pergaulan dan Persahabatan", pages: "Bagian akhir" }
+    ],
+    tags: ["bidayatul-hidayah", "ghazali", "tasawwuf", "adab", "tazkiyah"]
+  },
+  {
+    id: "adabul-islam-fi-nidhomil-usroh",
+    title: "Adabul Islam fi Nidhomil Usroh",
+    author: "Sayyid Muhammad bin Alawi bin Abbas al-Maliki",
+    category: "Akhlak & Keluarga",
+    madzhab: "Ahlussunnah wal Jama'ah",
+    era: "Kontemporer",
+    difficulty: "Pemula - Menengah",
+    description: "Kajian adab Islam dalam kehidupan keluarga yang dinisbatkan kepada Sayyid Muhammad bin Alawi bin Abbas al-Maliki.",
+    summary: "Kitab ini membahas tuntunan adab Islam dalam membangun dan menjaga kehidupan keluarga, termasuk tanggung jawab anggota keluarga, hubungan suami-istri, pendidikan anak, dan pembinaan rumah tangga berdasarkan nilai-nilai Islam.",
+    chapters: [
+      { id: "adabul-usroh-1", name: "Prinsip dan Tujuan Kehidupan Keluarga dalam Islam", pages: "Pembahasan awal" },
+      { id: "adabul-usroh-2", name: "Hak dan Tanggung Jawab dalam Rumah Tangga", pages: "Pembahasan keluarga" },
+      { id: "adabul-usroh-3", name: "Adab Suami-Istri dan Pendidikan Anak", pages: "Pembahasan adab keluarga" },
+      { id: "adabul-usroh-4", name: "Membina Keharmonisan dan Akhlak Keluarga", pages: "Pembahasan akhir" }
+    ],
+    tags: ["adabul-islam", "nidhomil-usroh", "maliki", "keluarga", "akhlak"]
+  },
+  {
+    id: "zadul-labib",
+    title: "Zadul Labib Syarah Matan Ghoyah wa Taqrib",
+    author: "R. Muhammad bin Ali Ba'athiyah",
+    category: "Fiqh Syafii",
+    madzhab: "Syafii",
+    era: "Kontemporer",
+    difficulty: "Menengah",
+    description: "Syarah atas Matan Ghoyah wa Taqrib yang dinisbatkan kepada R. Muhammad bin Ali Ba'athiyah, membahas fikih madzhab Syafi'i.",
+    summary: "Zadul Labib menjelaskan pokok-pokok fikih dalam Matan Ghoyah wa Taqrib. Kajian meliputi ibadah dan muamalah serta bab-bab fikih lainnya mengikuti susunan matan yang disyarah.",
+    chapters: [
+      { id: "zadul-labib-1", name: "Thaharah dan Bersuci", pages: "Mengikuti susunan matan" },
+      { id: "zadul-labib-2", name: "Shalat, Zakat, Puasa, dan Haji", pages: "Mengikuti susunan matan" },
+      { id: "zadul-labib-3", name: "Muamalah dan Akad", pages: "Mengikuti susunan matan" },
+      { id: "zadul-labib-4", name: "Munakahat, Jinayat, dan Bab Fikih Lainnya", pages: "Mengikuti susunan matan" }
+    ],
+    tags: ["zadul-labib", "ghoyah-wa-taqrib", "fiqh", "syafii", "baathiyah", "syarah"]
+  },
+  {
+    id: "fathul-ghoffar",
+    title: "Fathul Ghoffar Syarah Taqrib",
+    author: "Imam Ibnu Qasim al-'Abbad",
+    category: "Fiqh Syafii",
+    madzhab: "Syafii",
+    era: "Klasik",
+    difficulty: "Menengah",
+    description: "Syarah atas Matan Taqrib yang dinisbatkan kepada Imam Ibnu Qasim al-'Abbad, sebagai rujukan kajian fikih madzhab Syafi'i.",
+    summary: "Fathul Ghoffar menguraikan pembahasan fikih yang tersusun dalam Matan Taqrib. Kajian mencakup ibadah, muamalah, dan bab hukum lainnya; rincian redaksi serta penomoran halaman mengikuti edisi kitab yang digunakan.",
+    chapters: [
+      { id: "fathul-ghoffar-1", name: "Thaharah dan Bersuci", pages: "Mengikuti susunan matan" },
+      { id: "fathul-ghoffar-2", name: "Shalat, Zakat, Puasa, dan Haji", pages: "Mengikuti susunan matan" },
+      { id: "fathul-ghoffar-3", name: "Jual-Beli dan Muamalah", pages: "Mengikuti susunan matan" },
+      { id: "fathul-ghoffar-4", name: "Nikah dan Bab-Bab Fikih Lainnya", pages: "Mengikuti susunan matan" }
+    ],
+    tags: ["fathul-ghoffar", "taqrib", "fiqh", "syafii", "syarah"]
   }
 ];
+
+function getKitabEraSortValue(era: string) {
+  const centuries = [...era.matchAll(/abad ke-(\d+)/gi)].map((match) => Number(match[1]));
+  if (centuries.length > 0) return Math.max(...centuries) * 100;
+
+  const hijriYears = [...era.matchAll(/\b(\d{3,4})\s*-\s*(\d{3,4})\s*H\b/gi)]
+    .flatMap((match) => [Number(match[1]), Number(match[2])]);
+  if (hijriYears.length > 0) return Math.max(...hijriYears);
+
+  if (/kontemporer/i.test(era) || /\d{4}\s*M/i.test(era)) return 1600;
+  return -1;
+}
+
+kitabCatalog.sort((left, right) => getKitabEraSortValue(right.era) - getKitabEraSortValue(left.era));
 
 // Fallback response for Bahtsul Masail if Gemini is unconfigured or fails
 function getFallbackBahtsulMasail(query: string): any {
@@ -1720,15 +1806,56 @@ PANDUAN:
 
 // Endpoint 5: Chat with Specific Kitab Book (Fast & Scholarly with gemini-3.1-flash-lite)
 app.post("/api/chat-kitab", async (req, res) => {
-  const { kitabId, kitabTitle, messages } = req.body;
+  const { kitabId, kitabTitle, messages, images: requestedImages = [] } = req.body;
 
   if (!kitabId || !messages || !Array.isArray(messages)) {
     return res.status(400).json({ error: "Parameter tidak lengkap. Harap sertakan kitabId dan daftar chat messages." });
   }
 
   const latestUserMessage = messages[messages.length - 1]?.content;
-  if (!latestUserMessage) {
-    return res.status(400).json({ error: "Sertakan pesan obrolan terbaru." });
+  if (!Array.isArray(requestedImages) || requestedImages.length > 4) {
+    return res.status(400).json({ error: "Lampirkan maksimal 4 gambar dalam satu pertanyaan." });
+  }
+  if ((typeof latestUserMessage !== "string" || !latestUserMessage.trim()) && requestedImages.length === 0) {
+    return res.status(400).json({ error: "Sertakan pesan obrolan atau gambar soal." });
+  }
+
+  const allowedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
+  const maxImageBytes = 1_200_000;
+  const maxTotalImageBytes = 2_400_000;
+  let totalImageBytes = 0;
+  const images: { mimeType: string; data: string }[] = [];
+
+  for (const image of requestedImages) {
+    if (!image || typeof image.mimeType !== "string" || !allowedImageTypes.has(image.mimeType) || typeof image.data !== "string") {
+      return res.status(400).json({ error: "Format gambar tidak didukung. Gunakan JPEG, PNG, atau WebP." });
+    }
+
+    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(image.data)) {
+      return res.status(400).json({ error: "Data gambar tidak valid." });
+    }
+
+    const imageBuffer = Buffer.from(image.data, "base64");
+    if (imageBuffer.length === 0 || imageBuffer.length > maxImageBytes) {
+      return res.status(400).json({ error: "Ukuran setiap gambar maksimal 1,2 MB setelah diproses." });
+    }
+
+    const hasValidSignature = image.mimeType === "image/jpeg"
+      ? imageBuffer[0] === 0xff && imageBuffer[1] === 0xd8 && imageBuffer[2] === 0xff
+      : image.mimeType === "image/png"
+        ? imageBuffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+        : imageBuffer.toString("ascii", 0, 4) === "RIFF" && imageBuffer.toString("ascii", 8, 12) === "WEBP";
+
+    if (!hasValidSignature) {
+      return res.status(400).json({ error: "Isi gambar tidak sesuai dengan format berkasnya." });
+    }
+
+    totalImageBytes += imageBuffer.length;
+    if (totalImageBytes > maxTotalImageBytes) {
+      return res.status(400).json({ error: "Total ukuran gambar maksimal 2,4 MB setelah diproses." });
+    }
+
+    images.push({ mimeType: image.mimeType, data: image.data });
   }
 
   const selectedKitab = kitabCatalog.find(k => k.id === kitabId);
@@ -1737,6 +1864,9 @@ app.post("/api/chat-kitab", async (req, res) => {
     : `Kitab: "${kitabTitle}" (klasik Turath).`;
 
   if (!ai) {
+    if (images.length > 0) {
+      return res.status(503).json({ error: "Analisis gambar belum tersedia karena layanan AI belum dikonfigurasi." });
+    }
     console.warn("Gemini API not configured. Returning static dialogue companion.");
     return res.json({
       role: "model",
@@ -1768,24 +1898,41 @@ app.post("/api/chat-kitab", async (req, res) => {
   const prompt = `${kitabContext}
   ${tafsirFormatting}
   ${taqriratFormatting}
+
+  ${images.length > 0
+    ? `Pengguna melampirkan ${images.length} gambar soal dan/atau halaman kitab rujukan. Bedakan foto soal dari halaman sumber. Baca teks yang terlihat setepat mungkin; tandai bagian yang buram atau tidak terbaca, jangan menebaknya. Dalam content, susun jawaban dengan bagian: "Teks soal terbaca", "Terjemahan" (terjemahkan teks Arab ke Bahasa Indonesia bila ada; jika tidak, nyatakan tidak diperlukan), dan "Penjelasan". Jelaskan apa yang diminta soal dan berikan pembahasan yang sesuai kitab terpilih. Kutip dalil dari gambar hanya jika itu jelas merupakan halaman kitab dan teksnya terbaca.`
+    : ""}
+
+  Keterbatasan sumber dan rujukan:
+  - Katalog aplikasi hanya menyediakan metadata dan ringkasan kitab, bukan naskah lengkap. Jangan mengklaim memiliki teks lengkap atau mengarang kutipan Arab, dalil, edisi, juz, bab, maupun nomor halaman.
+  - Cantumkan kutipan/dalil hanya jika redaksinya dan sumbernya dapat dipastikan. Jika tidak dapat dipastikan, kembalikan array dalil kosong dan jelaskan keterbatasan sumber dalam content.
+  - Nomor halaman hanya boleh dicantumkan jika tampak dan dapat dihubungkan dengan jelas ke edisi kitab yang dirujuk. Jika belum terverifikasi, katakan "nomor halaman belum terverifikasi" dan minta pengguna menyertakan edisi atau foto halaman kitab yang relevan.
   
-  Santri/Pengguna menanyakan: "${latestUserMessage}".
+  Santri/Pengguna menanyakan: "${latestUserMessage || "Mohon baca, terjemahkan bila perlu, dan kaji soal pada gambar yang dilampirkan."}".
   
   Konteks obrolan terkini:
   ${conversationHistory}
   
   ${isTaqriratAlfiyah
-    ? "Tugas: berikan jawaban penjelasan ringkas dalam properti content. Gunakan pola Qouluhu (قوله) hanya untuk lafaz matan yang benar-benar diketahui atau diberikan pengguna. Isi dalil dengan kutipan Arab, terjemahan, dan rujukan hanya bila redaksinya dapat dipastikan; selain itu kembalikan dalil sebagai array kosong dan jelaskan keterbatasan sumber di content. Jangan menulis salam atau pengantar panjang."
-    : "Tugas: pilih 1-3 dalil/kutipan langsung dari kitab tersebut yang menjawab pertanyaan. Sertakan teks Arab asli berharakat (ibarat), terjemahan Indonesia, dan rujukan bab/halaman. Jangan menulis paragraf bimbingan, salam, atau penjelasan panjang — hanya dalil dan terjemahannya."}`;
+    ? "Tugas: berikan penjelasan dalam content. Gunakan pola Qouluhu (قوله) hanya untuk lafaz matan yang benar-benar diketahui atau diberikan pengguna. Isi dalil hanya dengan kutipan Arab, terjemahan, dan rujukan yang dapat dipastikan; selain itu gunakan array kosong dan jelaskan keterbatasan sumber. Jangan menulis salam atau pengantar panjang."
+    : "Tugas: jawab pertanyaan dengan penjelasan ringkas dalam content. Isi dalil dengan kutipan teks Arab, terjemahan Indonesia, dan rujukan hanya jika redaksi dan sumbernya dapat dipastikan; jika tidak, gunakan array kosong. Jangan menulis salam atau pengantar panjang."}`;
 
   try {
     const generatePromise = ai.models.generateContent({
       model: AI_MODEL,
-      contents: prompt,
+      contents: images.length > 0
+        ? [{
+            role: "user",
+            parts: [
+              { text: prompt },
+              ...images.map(({ mimeType, data }) => ({ inlineData: { mimeType, data } }))
+            ]
+          }]
+        : prompt,
       config: {
         systemInstruction: isTaqriratAlfiyah
           ? "Anda adalah pendamping kajian Alfiyah dan Taqrirat Alfiyah di Pesantren KHARISMA. Bedakan matan Alfiyah dari uraian taqrirat, jelaskan penanda Qouluhu (قوله) dengan tepat, dan jangan mengarang kutipan atau nomor halaman yang tidak tersedia. Jawab dalam format JSON sesuai schema."
-          : "Anda adalah asisten ahli Kitab Turath (Kitab Kuning) di Pesantren KHARISMA. Anda hanya menyajikan kutipan dalil Arab berharakat yang sahih dari kitab yang dimaksud, beserta terjemahan Indonesia dan rujukannya. Tanpa paragraf pengantar atau bimbingan panjang. Jawab dalam format JSON sesuai schema.",
+          : "Anda adalah asisten kajian Kitab Turath (Kitab Kuning) di Pesantren KHARISMA. Jangan mengarang teks kitab, kutipan, edisi, atau nomor halaman. Bedakan informasi katalog dari sumber primer; jika sumber tidak tersedia, nyatakan keterbatasannya. Jawab dalam format JSON sesuai schema.",
         thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
         responseMimeType: "application/json",
         responseSchema: {
@@ -1793,13 +1940,13 @@ app.post("/api/chat-kitab", async (req, res) => {
           properties: {
             content: {
               type: Type.STRING,
-              description: "Penjelasan ringkas dalam bahasa Indonesia; digunakan khusus untuk menjelaskan taqrirat Alfiyah."
+              description: "Jawaban bahasa Indonesia. Jika ada gambar, pisahkan teks soal terbaca, terjemahan teks Arab bila ada, dan penjelasan; nyatakan sumber/halaman yang belum terverifikasi."
             },
             dalil: {
               type: Type.ARRAY,
               description: isTaqriratAlfiyah
-                ? "Kutipan matan yang dapat dipastikan; boleh berupa array kosong jika redaksi sumber tidak tersedia."
-                : "1-3 dalil langsung dari kitab tersebut.",
+                ? "Kutipan matan yang dapat dipastikan; gunakan array kosong jika redaksi sumber tidak tersedia."
+                : "Kutipan yang sumber dan redaksinya dapat dipastikan; gunakan array kosong jika tidak dapat diverifikasi.",
               items: {
                 type: Type.OBJECT,
                 properties: {
@@ -1822,7 +1969,7 @@ app.post("/api/chat-kitab", async (req, res) => {
               }
             }
           },
-          required: isTaqriratAlfiyah ? ["content", "dalil"] : ["dalil"]
+          required: ["content", "dalil"]
         }
       }
     });
@@ -1840,8 +1987,8 @@ app.post("/api/chat-kitab", async (req, res) => {
     const parsed = JSON.parse(textOutput.trim());
     const dalil = Array.isArray(parsed.dalil) ? parsed.dalil : [];
     const content = typeof parsed.content === "string" ? parsed.content : "";
-    if (dalil.length === 0 && !(isTaqriratAlfiyah && content.trim())) {
-      throw new Error("Model tidak mengembalikan dalil.");
+    if (!content.trim()) {
+      throw new Error("Model tidak mengembalikan penjelasan.");
     }
     return res.json({
       role: "model",
@@ -1850,6 +1997,9 @@ app.post("/api/chat-kitab", async (req, res) => {
     });
   } catch (error: any) {
     console.warn("Gagal mengobrol dengan kitab, serving resilient study guidance:", error?.status || error?.code || "", error?.message || error);
+    if (images.length > 0) {
+      return res.status(502).json({ error: "Analisis gambar gagal. Periksa keterbacaan gambar lalu coba lagi." });
+    }
     const gentleStudyFallback = `Santri yang dirahmati Allah, mengenai pertanyaanmu tentang hal tersebut dalam Kitab ${selectedKitab?.title || kitabTitle || 'Turath'}: Mualif (${selectedKitab?.author || 'ulama salaf'}) senantiasa mengingatkan kita untuk mendahulukan thaharah batin dan kepatuhan syariat. Setiap bab dalam kitab ini mengajarkan bahwa ilmu yang berkah adalah ilmu yang diamalkan dengan penuh keikhlasan dan ketenangan hati. Teruslah istiqamah dalam muthala'ah naskah turath ini.`;
     return res.json({
       role: "model",
