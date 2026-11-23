@@ -1,0 +1,6 @@
+{
+  "name": "Kharisma Pedia",
+  "description": "Kharisma Pedia: kajian Bahtsul Masa'il dan penjelajahan Kitab Kuning (Turath) interaktif.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Self-hosted Arabic font: avoids relying on Google Fonts being reachable
+   from every device on the LAN/tailnet. Variable weight 400-700, Arabic subset. */
+@font-face {
+  font-family: "Noto Naskh Arabic";
+  src: url("./assets/noto-naskh-arabic-arabic.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC;
+}
+
+@theme {
+  /* Noto Naskh is placed after the Latin fonts so Arabic glyphs anywhere in the
+     app fall back to it automatically, while Latin text keeps Plus Jakarta Sans. */
+  --font-sans: "Plus Jakarta Sans", "Noto Naskh Arabic", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-serif: "Plus Jakarta Sans", "Noto Naskh Arabic", Georgia, serif;
+  --font-arabic: "Noto Naskh Arabic", "Scheherazade New", "Amiri", "Traditional Arabic", serif;
+  --font-mono: "JetBrains Mono", "Noto Naskh Arabic", monospace;
+
+  /* Custom palette */
+  --color-emerald-deep: #163631;
+  --color-emerald-medium: #1F4A43;
+  --color-emerald-light: #2A6057;
+  --color-gold-heritage: #C5A059;
+  --color-gold-bright: #D4AF37;
+  --color-parchment: #FAF7F2;
+  --color-paper: #F3ECE2;
+}
+
+/* Base custom classes to enhance styling */
+.text-arabic {
+  font-family: var(--font-arabic);
+  direction: rtl;
+  text-align: right;
+  line-height: 1.85;
+  letter-spacing: 0;
+  word-spacing: 0.02em;
+  font-weight: 600;
+  font-kerning: normal;
+  font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+  text-rendering: optimizeLegibility;
+  overflow-wrap: break-word;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.font-serif-lux {
+  font-family: var(--font-sans);
+  letter-spacing: -0.015em;
+}
+
+.parchment-glow {
+  background: radial-gradient(circle at 50% 50%, #FFFDFB 0%, #FAF7F2 100%);
+  border: 1px solid rgba(197, 160, 89, 0.22);
+}
+
+.arab-glow {
+  text-shadow: 0 0 1px rgba(197, 160, 89, 0.1);
+}
+
+/* Custom scrollbar to match the traditional aesthetic */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-parchment);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-emerald-light);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-emerald-deep);
+}
+
+/* Hide scrollbar for clean horizontal tab scroll on phones */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+* {
+  -webkit-tap-highlight-color: rgba(197, 160, 89, 0.15);
+}
