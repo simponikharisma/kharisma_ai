@@ -207,9 +207,7 @@ function getFormattedCalendarDates() {
 export default function App() {
   // Real-time automatic calendar state
   const [currentCalendar, setCurrentCalendar] = useState<{ hijri: string; masehi: string }>(getFormattedCalendarDates);
-  const [waitingWorker, setWaitingWorker] = useState<ServiceWorker | null>(null);
-  const [isUpdatingApp, setIsUpdatingApp] = useState(false);
-  const updateOnControllerChangeRef = useRef(false);
+  const reloadOnControllerChangeRef = useRef(Boolean(navigator.serviceWorker?.controller));
 
   // State variables
   const [activeTab, setActiveTab] = useState<"bahtsul-masail" | "maktabah" | "kamus" | "bookmarks">("bahtsul-masail");
@@ -263,31 +261,14 @@ export default function App() {
     if (!("serviceWorker" in navigator)) return;
 
     let isMounted = true;
-    let registration: ServiceWorkerRegistration | undefined;
-    let installingWorker: ServiceWorker | null = null;
-    const showWaitingWorker = () => {
-      if (isMounted && registration?.waiting && navigator.serviceWorker.controller) {
-        setWaitingWorker(registration.waiting);
-      }
-    };
-    const handleInstallingStateChange = () => {
-      if (installingWorker?.state === "installed") showWaitingWorker();
-    };
-    const handleUpdateFound = () => {
-      installingWorker = registration?.installing || null;
-      installingWorker?.addEventListener("statechange", handleInstallingStateChange);
-    };
     const handleControllerChange = () => {
-      if (updateOnControllerChangeRef.current) window.location.reload();
+      if (reloadOnControllerChangeRef.current) window.location.reload();
     };
 
     navigator.serviceWorker.addEventListener("controllerchange", handleControllerChange);
     navigator.serviceWorker.register(`/service-worker.js?build=${__APP_BUILD_ID__}`)
-      .then((serviceWorkerRegistration) => {
+      .then((registration) => {
         if (!isMounted) return;
-        registration = serviceWorkerRegistration;
-        showWaitingWorker();
-        registration.addEventListener("updatefound", handleUpdateFound);
         void registration.update().catch((error) => {
           console.error("Pemeriksaan pembaruan aplikasi gagal:", error);
         });
@@ -299,17 +280,8 @@ export default function App() {
     return () => {
       isMounted = false;
       navigator.serviceWorker.removeEventListener("controllerchange", handleControllerChange);
-      registration?.removeEventListener("updatefound", handleUpdateFound);
-      installingWorker?.removeEventListener("statechange", handleInstallingStateChange);
     };
   }, []);
-
-  const applyAppUpdate = () => {
-    if (!waitingWorker) return;
-    updateOnControllerChangeRef.current = true;
-    setIsUpdatingApp(true);
-    waitingWorker.postMessage({ type: "SKIP_WAITING" });
-  };
 
   // Fetch initial data from server on mount
   useEffect(() => {
@@ -858,7 +830,7 @@ export default function App() {
                 {currentCalendar.hijri}
               </p>
               <p className="opacity-85 font-mono text-[11px] sm:text-xs">
-                {currentCalendar.masehi} — Majelis Salaf
+                {currentCalendar.masehi}
               </p>
             </div>
             <span className="hidden sm:block h-6 sm:h-8 w-[1px] bg-gold-heritage/25"></span>
@@ -866,22 +838,8 @@ export default function App() {
         </div>
       </header>
 
-      {waitingWorker && (
-        <div className="fixed top-3 left-3 right-3 z-[60] mx-auto flex max-w-lg items-center justify-between gap-3 rounded-xl border border-gold-heritage/50 bg-emerald-deep px-4 py-3 text-sm text-white shadow-xl" role="status">
-          <span>Pembaruan Kharisma Pedia tersedia.</span>
-          <button
-            type="button"
-            onClick={applyAppUpdate}
-            disabled={isUpdatingApp}
-            className="shrink-0 rounded-lg bg-gold-bright px-3 py-2 font-bold text-emerald-deep transition hover:bg-gold-heritage disabled:opacity-70"
-          >
-            {isUpdatingApp ? "Memperbarui..." : "Perbarui"}
-          </button>
-        </div>
-      )}
-
       {/* Main Subbar Navigation - Mobile swipeable & desktop full */}
-      <nav className="bg-emerald-medium border-b border-gold-heritage/30 text-stone-200 py-1.5 px-2.5 sm:px-4 sticky top-0 z-40 shadow-md">
+      <nav className="hidden sm:block bg-emerald-medium border-b border-gold-heritage/30 text-stone-200 py-1.5 px-2.5 sm:px-4 sticky top-0 z-40 shadow-md">
         <div className="max-w-7xl mx-auto flex items-center gap-1 sm:gap-2 overflow-x-auto no-scrollbar scroll-smooth">
           <button
             onClick={() => { setActiveTab("bahtsul-masail"); stopTTS(); }}
