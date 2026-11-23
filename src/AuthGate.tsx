@@ -1,9 +1,20 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { KeyRound, LogOut, Loader2, ShieldCheck } from "lucide-react";
+import { createContext, useContext, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { KeyRound, Loader2, ShieldCheck } from "lucide-react";
 
 type AuthGateProps = {
   children: ReactNode;
 };
+
+type AuthControls = {
+  logout: () => Promise<void>;
+  logoutError: string;
+};
+
+const AuthControlsContext = createContext<AuthControls | null>(null);
+
+export function useAuthControls() {
+  return useContext(AuthControlsContext);
+}
 
 export default function AuthGate({ children }: AuthGateProps) {
   const [status, setStatus] = useState<"checking" | "signed-out" | "signed-in">("checking");
@@ -81,24 +92,9 @@ export default function AuthGate({ children }: AuthGateProps) {
 
   if (status === "signed-in") {
     return (
-      <>
+      <AuthControlsContext.Provider value={{ logout: handleLogout, logoutError: error }}>
         {children}
-        <div className="fixed top-3 right-3 z-50 flex max-w-[calc(100vw-1.5rem)] flex-col items-end gap-2">
-          {error && (
-            <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950 shadow" role="alert">
-              {error}
-            </p>
-          )}
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-emerald-deep px-3 py-2 text-sm font-semibold text-white shadow-lg hover:bg-emerald-light"
-          >
-            <LogOut className="h-4 w-4" />
-            Keluar
-          </button>
-        </div>
-      </>
+      </AuthControlsContext.Provider>
     );
   }
 
