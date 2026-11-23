@@ -281,7 +281,7 @@ const kitabCatalog = [
   {
     id: "alfiyah-ibnu-malik",
     title: "Alfiyah Ibnu Malik",
-    author: "Syekh Muhammad bin Abdul Malik Al-Andalusi",
+    author: "Syekh Muhammad bin Abdullah bin Malik Al-Andalusi",
     category: "Tata Bahasa (Nahwu & Shorof)",
     madzhab: "Umum",
     era: "Abad ke-7 Hijriah",
@@ -295,6 +295,24 @@ const kitabCatalog = [
       { id: "am-4", name: "Fasilitas Sharaf (Perubahan Kata)", pages: "Bagian Akhir Kitab" }
     ],
     tags: ["nahwu", "shorof", "bahasa", "sastra", "syair"]
+  },
+  {
+    id: "taqrirat-alfiyah-lirboyo",
+    title: "Taqrirat Alfiyah Ibnu Malik (Lirboyo)",
+    author: "Matan Alfiyah: Syekh Muhammad bin Abdullah bin Malik; penyusun taqrirat tidak terverifikasi",
+    category: "Tata Bahasa (Nahwu)",
+    madzhab: "Tradisi pengajaran pesantren Lirboyo",
+    era: "Kajian Madrasah Hidayatul Mubtadi-ien; edisi Makna Jawa tercatat terbitan Lirboyo Kediri",
+    difficulty: "Tinggi",
+    description: "Catatan pengajian/taqrirat untuk mempelajari Alfiyah Ibnu Malik yang digunakan dalam kajian Madrasah Hidayatul Mubtadi-ien, Pondok Pesantren Lirboyo. Tersedia pula edisi Makna Jawa yang tercatat dengan penerbit Lirboyo Kediri.",
+    summary: "Membantu membaca dan memahami bait-bait Alfiyah melalui penjelasan lafaz, susunan nahwu, dan maksud kaidah. Ungkapan “Qouluhu ...” (قوله) berarti “perkataan/ungkapan beliau ...”; lafaz setelahnya menunjuk bagian matan Alfiyah yang sedang dijelaskan, lalu diikuti uraian makna atau kaidahnya. Jangan menganggap setiap uraian “Qouluhu” sebagai bait baru.",
+    chapters: [
+      { id: "tal-1", name: "Muqaddimah Alfiyah dan penjelasan dengan pola Qouluhu", pages: "Bagian awal" },
+      { id: "tal-2", name: "Kalam, isim, fi'il, huruf, dan tanda-tandanya", pages: "Pembahasan dasar nahwu" },
+      { id: "tal-3", name: "I'rab, bina', marfu'at, dan amil-amilnya", pages: "Pembahasan nahwu" },
+      { id: "tal-4", name: "Manshubat, majrurat, tawabi', dan bab-bab lanjutan", pages: "Pembahasan nahwu" }
+    ],
+    tags: ["taqrirat", "alfiyah", "ibnu-malik", "lirboyo", "nahwu", "makna-jawa", "qouluhu"]
   },
   {
     id: "qurrotul-uyun",
@@ -1612,31 +1630,50 @@ app.post("/api/chat-kitab", async (req, res) => {
   - Jangan menyajikan lafaz tafsir sebagai bagian dari ayat. Jika batas antara ayat dan tafsir tidak pasti, jangan mengutipnya sebagai ayat; beri tanda kurung sebagai tafsir.
   - Pertahankan format ini pada setiap kutipan Arab agar pembaca dapat membedakan ayat dan tafsir dengan jelas.`
     : "";
+  const isTaqriratAlfiyah = selectedKitab?.id === "taqrirat-alfiyah-lirboyo";
+  const taqriratFormatting = isTaqriratAlfiyah
+    ? `\nInstruksi khusus Taqrirat Alfiyah:
+  - "Qouluhu ..." (قوله) berarti "perkataan/ungkapan beliau ..."; lafaz setelahnya adalah petikan matan Alfiyah yang sedang diuraikan, bukan bait baru.
+  - Bila pengguna menyebut lafaz atau bait tertentu, jelaskan dulu petikan itu, maknanya, susunan nahwunya, dan kaidah yang dibahas.
+  - Jika pengguna tidak menyertakan lafaz/bait dan Anda tidak yakin dengan redaksi persisnya, jangan mengarang kutipan Arab atau nomor halaman. Terangkan pola Qouluhu secara umum dan minta pengguna mengirim lafaz atau foto halaman untuk syarah yang tepat.
+  - Perlakukan identitas sebagai edisi taqrirat yang dikaitkan dengan kajian Lirboyo; jangan mengarang nama penyusun taqrirat, isi halaman, atau klaim bahwa Anda memiliki naskah lengkap.`
+    : "";
 
   const prompt = `${kitabContext}
   ${tafsirFormatting}
+  ${taqriratFormatting}
   
   Santri/Pengguna menanyakan: "${latestUserMessage}".
   
   Konteks obrolan terkini:
   ${conversationHistory}
   
-  Tugas: pilih 1-3 dalil/kutipan langsung dari kitab tersebut yang menjawab pertanyaan. Sertakan teks Arab asli berharakat (ibarat), terjemahan Indonesia, dan rujukan bab/halaman. Jangan menulis paragraf bimbingan, salam, atau penjelasan panjang — hanya dalil dan terjemahannya.`;
+  ${isTaqriratAlfiyah
+    ? "Tugas: berikan jawaban penjelasan ringkas dalam properti content. Gunakan pola Qouluhu (قوله) hanya untuk lafaz matan yang benar-benar diketahui atau diberikan pengguna. Isi dalil dengan kutipan Arab, terjemahan, dan rujukan hanya bila redaksinya dapat dipastikan; selain itu kembalikan dalil sebagai array kosong dan jelaskan keterbatasan sumber di content. Jangan menulis salam atau pengantar panjang."
+    : "Tugas: pilih 1-3 dalil/kutipan langsung dari kitab tersebut yang menjawab pertanyaan. Sertakan teks Arab asli berharakat (ibarat), terjemahan Indonesia, dan rujukan bab/halaman. Jangan menulis paragraf bimbingan, salam, atau penjelasan panjang — hanya dalil dan terjemahannya."}`;
 
   try {
     const generatePromise = ai.models.generateContent({
       model: AI_MODEL,
       contents: prompt,
       config: {
-        systemInstruction: "Anda adalah asisten ahli Kitab Turath (Kitab Kuning) di Pesantren KHARISMA. Anda hanya menyajikan kutipan dalil Arab berharakat yang sahih dari kitab yang dimaksud, beserta terjemahan Indonesia dan rujukannya. Tanpa paragraf pengantar atau bimbingan panjang. Jawab dalam format JSON sesuai schema.",
+        systemInstruction: isTaqriratAlfiyah
+          ? "Anda adalah pendamping kajian Alfiyah dan Taqrirat Alfiyah di Pesantren KHARISMA. Bedakan matan Alfiyah dari uraian taqrirat, jelaskan penanda Qouluhu (قوله) dengan tepat, dan jangan mengarang kutipan atau nomor halaman yang tidak tersedia. Jawab dalam format JSON sesuai schema."
+          : "Anda adalah asisten ahli Kitab Turath (Kitab Kuning) di Pesantren KHARISMA. Anda hanya menyajikan kutipan dalil Arab berharakat yang sahih dari kitab yang dimaksud, beserta terjemahan Indonesia dan rujukannya. Tanpa paragraf pengantar atau bimbingan panjang. Jawab dalam format JSON sesuai schema.",
         thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
+            content: {
+              type: Type.STRING,
+              description: "Penjelasan ringkas dalam bahasa Indonesia; digunakan khusus untuk menjelaskan taqrirat Alfiyah."
+            },
             dalil: {
               type: Type.ARRAY,
-              description: "1-3 dalil langsung dari kitab tersebut.",
+              description: isTaqriratAlfiyah
+                ? "Kutipan matan yang dapat dipastikan; boleh berupa array kosong jika redaksi sumber tidak tersedia."
+                : "1-3 dalil langsung dari kitab tersebut.",
               items: {
                 type: Type.OBJECT,
                 properties: {
@@ -1659,7 +1696,7 @@ app.post("/api/chat-kitab", async (req, res) => {
               }
             }
           },
-          required: ["dalil"]
+          required: isTaqriratAlfiyah ? ["content", "dalil"] : ["dalil"]
         }
       }
     });
@@ -1676,12 +1713,13 @@ app.post("/api/chat-kitab", async (req, res) => {
     }
     const parsed = JSON.parse(textOutput.trim());
     const dalil = Array.isArray(parsed.dalil) ? parsed.dalil : [];
-    if (dalil.length === 0) {
+    const content = typeof parsed.content === "string" ? parsed.content : "";
+    if (dalil.length === 0 && !(isTaqriratAlfiyah && content.trim())) {
       throw new Error("Model tidak mengembalikan dalil.");
     }
     return res.json({
       role: "model",
-      content: "",
+      content,
       dalil
     });
   } catch (error: any) {
