@@ -4,7 +4,7 @@ Aplikasi memakai satu akun admin; belum ada pendaftaran akun publik. API aplikas
 
 ## Menjalankan secara lokal
 
-Tambahkan tiga variabel ini ke file `.env` di direktori proyek, lalu mulai ulang server:
+Salin `.env.example` menjadi `.env`, isi tiga variabel login, lalu mulai ulang server:
 
 ```env
 ADMIN_USERNAME=nama-admin-anda
@@ -22,6 +22,6 @@ Jangan gunakan contoh nilai di atas sebagai kredensial sungguhan dan jangan comm
 
 ## Menyiapkan di Vercel
 
-Buka **Project Settings → Environment Variables**, tambahkan `ADMIN_USERNAME`, `ADMIN_PASSWORD`, dan `AUTH_SECRET` untuk environment yang dipakai (umumnya **Production**), kemudian buat deployment baru. `.env` lokal tidak dikirim otomatis ke Vercel.
+Buka **Project Settings → Environment Variables**, tambahkan `ADMIN_USERNAME`, `ADMIN_PASSWORD`, dan `AUTH_SECRET` untuk environment yang dipakai (umumnya **Production**), kemudian buat deployment baru. `.env` lokal tidak dikirim otomatis ke Vercel. Jika login mengembalikan 503, respons menyebut variabel yang kosong atau terlalu pendek tanpa membocorkan nilainya; pastikan variabel tersebut diaktifkan untuk environment deployment dan deploy ulang setelah perubahan.
 
-Gunakan username dan password yang sama pada form login. Jika variabel belum diatur atau tidak memenuhi panjang minimum, halaman akan menampilkan pesan bahwa login belum dikonfigurasi.
+Gunakan username dan password yang sama pada form login. Jika variabel belum diatur atau tidak memenuhi panjang minimum, halaman akan menampilkan pesan konfigurasi yang lebih spesifik.
