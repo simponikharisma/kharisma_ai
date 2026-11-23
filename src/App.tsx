@@ -875,6 +875,12 @@ export default function App() {
   };
 
   const selectedKitab = books.find(b => b.id === selectedKitabId);
+  const selectedKitabIsNazam = Boolean(
+    selectedKitab && (
+      selectedKitab.id.includes("alfiyah") ||
+      selectedKitab.tags?.some((tag: string) => ["nazam", "nadhom", "syair", "alfiyah"].includes(tag.toLowerCase()))
+    )
+  );
   const filteredBooks = books.filter(b => {
     if (bookCategoryFilter !== "semua") {
       const matchCat =
@@ -1787,13 +1793,27 @@ export default function App() {
                                 )}
                                 {msg.role === "model" && msg.dalil !== undefined && (
                                   <div className="mt-3 space-y-2">
-                                    <h4 className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">Ibarat / Matan Arab dari Kitab</h4>
+                                    <h4 className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
+                                      {selectedKitabIsNazam ? "Matan Nadham — bait terpisah" : "Ibarat / Matan Arab dari Kitab"}
+                                    </h4>
                                     {msg.dalil && msg.dalil.length > 0 ? msg.dalil.map((d, di) => (
-                                      <div key={di} className="bg-amber-50/70 border border-gold-heritage/30 rounded-xl p-3">
-                                        <p className="text-arabic text-[18px] sm:text-[20px] text-emerald-deep" dir="rtl" lang="ar">{d.teksArab}</p>
-                                        <p className="text-[11px] sm:text-xs text-stone-600 italic mt-2">{d.terjemahan}</p>
-                                        <p className="text-[10px] font-mono text-stone-500 mt-1">— {d.rujukan}</p>
-                                      </div>
+                                      <React.Fragment key={di}>
+                                        <div className={`bg-amber-50/70 border border-gold-heritage/30 rounded-xl p-3 ${selectedKitabIsNazam ? "ring-1 ring-gold-heritage/10" : ""}`}>
+                                          <p className="text-arabic text-[18px] sm:text-[20px] text-emerald-deep" dir="rtl" lang="ar">{d.teksArab}</p>
+                                          <p className="text-[11px] sm:text-xs text-stone-600 italic mt-2">{d.terjemahan}</p>
+                                          <p className="text-[10px] font-mono text-stone-500 mt-1">— {d.rujukan}</p>
+                                        </div>
+                                        {selectedKitabIsNazam && di < msg.dalil.length - 1 && (
+                                          <div className="flex items-center gap-2 px-2 py-0.5" role="separator" aria-label="Pemisah antar bait nadham">
+                                            <span className="h-px flex-1 bg-gradient-to-r from-transparent via-gold-heritage/60 to-stone-300" />
+                                            <span className="inline-flex items-center gap-1.5 rounded-full border border-gold-heritage/30 bg-white px-2.5 py-1 text-[9px] font-semibold tracking-wide text-emerald-800 shadow-sm">
+                                              <Sparkles className="h-3 w-3 text-gold-heritage" aria-hidden="true" />
+                                              Bait berikutnya
+                                            </span>
+                                            <span className="h-px flex-1 bg-gradient-to-l from-transparent via-gold-heritage/60 to-stone-300" />
+                                          </div>
+                                        )}
+                                      </React.Fragment>
                                     )) : (
                                       <p className="text-xs text-stone-600 bg-stone-50 border border-stone-200 rounded-xl p-3">
                                         Ibarat Arab belum dapat diverifikasi dari sumber yang tersedia. Agar tidak mengarang, kirim foto halaman atau teks kitab yang dimaksud.

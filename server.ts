@@ -1896,6 +1896,12 @@ app.post("/api/chat-kitab", async (req, res) => {
   const kitabReferenceType = isNazamKitab
     ? "Untuk kitab berbentuk nadham, cantumkan nomor bait (bait ke-...) bila dapat dipastikan, bukan nomor halaman."
     : "Cantumkan rujukan bab; nomor halaman hanya boleh dipakai jika edisi/cetakan kitabnya teridentifikasi.";
+  const nazamFormatting = isNazamKitab
+    ? `\nFormat kutipan untuk kitab nadham:
+  - Setiap objek dalam daftar dalil harus berisi tepat satu bait penuh; jangan gabungkan bait pertama dan bait berikutnya dalam satu objek.
+  - Pertahankan dua syathr (bagian) dari bait yang sama bersama-sama dalam teksArab. Pisahkan bait yang berbeda sebagai objek dalil terpisah dan pertahankan urutan aslinya.
+  - Cantumkan nomor bait hanya jika benar-benar diketahui; jangan menyimpulkan nomor bait dari urutan kutipan.`
+    : "";
   const taqriratFormatting = isTaqriratAlfiyah
     ? `\nInstruksi khusus Taqrirat Alfiyah:
   - "Qouluhu ..." (قوله) berarti "perkataan/ungkapan beliau ..."; lafaz setelahnya adalah petikan matan Alfiyah yang sedang diuraikan, bukan bait baru.
@@ -1906,6 +1912,7 @@ app.post("/api/chat-kitab", async (req, res) => {
 
   const prompt = `${kitabContext}
   ${tafsirFormatting}
+  ${nazamFormatting}
   ${taqriratFormatting}
 
   ${images.length > 0
