@@ -993,10 +993,20 @@ function getFallbackKamusTranslate(query: string, mode: string = "auto"): any {
   const directKey = Object.keys(kamusTurath).find(k => k.toLowerCase() === cleanQ);
   if (directKey) {
     const item = kamusTurath[directKey];
+    if (mode === "terjemah") {
+      return {
+        kataAsal: directKey,
+        bahasaAsal: item.kategori === "pegon" ? "Jawa Pegon Pesantren" : "Bahasa Arab / istilah turath",
+        terjemahan: item.arti,
+        mode,
+        kategori: "Terjemahan langsung"
+      };
+    }
     return {
       kataAsal: directKey,
       bahasaAsal: item.kategori === "pegon" ? "Jawa Pegon Pesantren (Makna Gandul)" : item.kategori === "arab" ? "Bahasa Arab Klasik (Turath)" : "Istilah Ushul / Fiqh",
       terjemahan: item.arti,
+      mode,
       padananArab: item.padananArab || "",
       tarkibPegon: item.tarkib || "",
       contohPenggunaan: item.contoh,
@@ -1006,13 +1016,25 @@ function getFallbackKamusTranslate(query: string, mode: string = "auto"): any {
   }
 
   // 2. Partial search
-  const partialKey = Object.keys(kamusTurath).find(k => k.toLowerCase().includes(cleanQ) || cleanQ.includes(k.toLowerCase()));
+  const partialKey = mode === "terjemah"
+    ? undefined
+    : Object.keys(kamusTurath).find(k => k.toLowerCase().includes(cleanQ) || cleanQ.includes(k.toLowerCase()));
   if (partialKey) {
     const item = kamusTurath[partialKey];
+    if (mode === "terjemah") {
+      return {
+        kataAsal: query,
+        bahasaAsal: item.kategori === "pegon" ? "Jawa Pegon Pesantren" : "Bahasa Arab / istilah turath",
+        terjemahan: item.arti,
+        mode,
+        kategori: "Terjemahan langsung"
+      };
+    }
     return {
       kataAsal: query,
       bahasaAsal: item.kategori === "pegon" ? "Jawa Pegon Pesantren (Makna Gandul)" : "Bahasa Arab / Istilah",
       terjemahan: item.arti,
+      mode,
       padananArab: item.padananArab || "",
       tarkibPegon: item.tarkib || "",
       contohPenggunaan: item.contoh,
@@ -1023,11 +1045,21 @@ function getFallbackKamusTranslate(query: string, mode: string = "auto"): any {
 
   // 3. Fallback heuristic for words like "nanging", "utawi", or Arabic
   const isArabicScript = /[\u0600-\u06FF]/.test(query);
+  if (mode === "terjemah") {
+    return {
+      kataAsal: query,
+      bahasaAsal: isArabicScript ? "Bahasa Arab / teks turath" : "Jawa Pegon / transliterasi Arab",
+      terjemahan: "Terjemahan langsung belum tersedia untuk teks ini.",
+      mode,
+      kategori: "Terjemahan langsung"
+    };
+  }
   if (isArabicScript) {
     return {
       kataAsal: query,
       bahasaAsal: "Bahasa Arab Klasik (Turath)",
       terjemahan: `Terjemahan literal & kontekstual teks Arab: "${query}".`,
+      mode,
       padananArab: query,
       tarkibPegon: "Tarkib Arab Turath Pesantren",
       contohPenggunaan: `Kutipan dalam bab kitab: "${query}"`,
@@ -1040,6 +1072,7 @@ function getFallbackKamusTranslate(query: string, mode: string = "auto"): any {
     kataAsal: query,
     bahasaAsal: mode === "pegon-indo" ? "Jawa Pegon Pesantren" : "Istilah Kebahasaan Pesantren",
     terjemahan: `Terjemahan makna: "${query}" dalam tradisi telaah kitab santri.`,
+    mode,
     padananArab: "",
     tarkibPegon: "Kaidah Tarkib / Leksikon Santri",
     contohPenggunaan: `Contoh penerapan kata "${query}" dalam kajian bandongan santri.`,
@@ -1321,7 +1354,12 @@ app.post("/api/kamus/translate", async (req, res) => {
     return res.json(fallback);
   }
 
-  const prompt = `Terjemahkan dan berikan ulasan leksikografi mendalam untuk kata/kalimat tradisi pesantren & turath klasik berikut:
+  const prompt = mode === "terjemah"
+    ? `Terjemahkan langsung teks berikut ke Bahasa Indonesia. Teks dapat berupa bahasa Arab kitab/turath atau makna Jawa Pegon pesantren.
+Teks: "${cleanQuery}"
+
+Berikan hanya hasil terjemahan Indonesia yang lugas dan alami. Jangan uraikan nahwu-sharaf, tarkib, simbol Pegon, padanan kata, contoh, atau kaidah apa pun. Jika teks ambigu, terjemahkan berdasarkan makna yang paling wajar tanpa menambahkan penjelasan.`
+    : `Terjemahkan dan berikan ulasan leksikografi mendalam untuk kata/kalimat tradisi pesantren & turath klasik berikut:
 Teks: "${cleanQuery}"
 Mode: "${mode}"
 
@@ -1345,7 +1383,9 @@ PANDUAN:
       model: AI_MODEL,
       contents: prompt,
       config: {
-        systemInstruction: "Anda adalah Pakar Leksikografi Bahasa Arab Turath & Ahli Makna Gandul Jawa Pegon Pesantren Nusantara. Anda cerdas, menguasai tarkib nahwu-sharaf, rumus simbol pegon, dan gaya bahasa kitab kuning salaf. Jawab langsung dalam format JSON.",
+        systemInstruction: mode === "terjemah"
+          ? "Anda adalah penerjemah Arab dan Jawa Pegon ke Bahasa Indonesia. Untuk mode ini, berikan hanya terjemahan tanpa uraian kaidah. Jawab dalam format JSON."
+          : "Anda adalah Pakar Leksikografi Bahasa Arab Turath & Ahli Makna Gandul Jawa Pegon Pesantren Nusantara. Anda cerdas, menguasai tarkib nahwu-sharaf, rumus simbol pegon, dan gaya bahasa kitab kuning salaf. Jawab langsung dalam format JSON.",
         thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
         responseMimeType: "application/json",
         responseSchema: {
@@ -1377,7 +1417,7 @@ PANDUAN:
             },
             penjelasanMendalam: {
               type: Type.STRING,
-              description: "Penjelasan mendalam mengenai kaidah bahasa dan rahasia maknanya"
+              description: "Penjelasan mendalam mengenai kaidah bahasa dan rahasia maknanya; kosongkan untuk mode terjemahan langsung"
             },
             kategori: {
               type: Type.STRING,
@@ -1400,6 +1440,14 @@ PANDUAN:
       throw new Error("Respon terjemahan kosong dari model.");
     }
     const resultJson = JSON.parse(textOutput.trim());
+    resultJson.mode = mode;
+    if (mode === "terjemah") {
+      resultJson.padananArab = "";
+      resultJson.tarkibPegon = "";
+      resultJson.contohPenggunaan = "";
+      resultJson.penjelasanMendalam = "";
+      resultJson.kategori = "Terjemahan langsung";
+    }
     kamusCache.set(cacheKey, resultJson);
     return res.json(resultJson);
 
