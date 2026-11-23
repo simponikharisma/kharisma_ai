@@ -23,13 +23,21 @@ const AUTH_SESSION_COOKIE = "kharisma_admin_session";
 const AUTH_SESSION_TTL_SECONDS = 60 * 60 * 8;
 
 function isAuthConfigured() {
-  return Boolean(
-    ADMIN_USERNAME &&
-    ADMIN_PASSWORD &&
-    ADMIN_PASSWORD.length >= 12 &&
-    AUTH_SECRET &&
-    AUTH_SECRET.length >= 32
-  );
+  return getAuthConfigurationErrors().length === 0;
+}
+
+function getAuthConfigurationErrors() {
+  const errors: string[] = [];
+  if (!ADMIN_USERNAME?.trim()) errors.push("ADMIN_USERNAME belum diisi");
+  if (!ADMIN_PASSWORD) errors.push("ADMIN_PASSWORD belum diisi");
+  else if (ADMIN_PASSWORD.length < 12) errors.push("ADMIN_PASSWORD harus minimal 12 karakter");
+  if (!AUTH_SECRET) errors.push("AUTH_SECRET belum diisi");
+  else if (AUTH_SECRET.length < 32) errors.push("AUTH_SECRET harus minimal 32 karakter");
+  return errors;
+}
+
+function getAuthConfigurationMessage() {
+  return `Konfigurasi login belum valid: ${getAuthConfigurationErrors().join("; ")}. Atur variabel di .env lokal atau Vercel Project Settings → Environment Variables, lalu mulai ulang server atau buat deployment baru.`;
 }
 
 function safeStringEquals(left: string, right: string) {
@@ -76,9 +84,7 @@ function setAuthSessionCookie(req: express.Request, res: express.Response, value
 
 app.post("/api/auth/login", (req, res) => {
   if (!isAuthConfigured() || !ADMIN_USERNAME || !ADMIN_PASSWORD || !AUTH_SECRET) {
-    return res.status(503).json({
-      error: "Login belum dikonfigurasi. Admin perlu mengatur ADMIN_USERNAME, ADMIN_PASSWORD (minimal 12 karakter), dan AUTH_SECRET (minimal 32 karakter)."
-    });
+    return res.status(503).json({ error: getAuthConfigurationMessage() });
   }
 
   const username = typeof req.body?.username === "string" ? req.body.username : "";
@@ -104,7 +110,8 @@ app.get("/api/auth/session", (req, res) => {
   if (!isAuthConfigured()) {
     return res.status(503).json({
       authenticated: false,
-      error: "Login belum dikonfigurasi. Admin perlu mengatur ADMIN_USERNAME, ADMIN_PASSWORD (minimal 12 karakter), dan AUTH_SECRET (minimal 32 karakter)."
+      error: getAuthConfigurationMessage(),
+      configuration: getAuthConfigurationErrors()
     });
   }
   return res.json({ authenticated: isValidAuthSession(req) });

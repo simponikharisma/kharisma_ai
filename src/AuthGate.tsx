@@ -102,7 +102,7 @@ export default function AuthGate({ children }: AuthGateProps) {
     );
   }
 
-  const isConfigurationError = error.includes("belum dikonfigurasi") || error.includes("ADMIN_USERNAME");
+  const isConfigurationError = error.includes("belum dikonfigurasi") || error.includes("Konfigurasi login belum valid") || error.includes("ADMIN_USERNAME");
 
   return (
     <main className="min-h-screen flex items-center justify-center bg-[#F7F5F0] px-4 py-10">
@@ -128,39 +128,35 @@ export default function AuthGate({ children }: AuthGateProps) {
             </div>
           )}
 
-          {!isConfigurationError && (
-            <>
-              <label className="block text-sm font-semibold text-stone-700">
-                Nama pengguna
-                <input
-                  required
-                  autoComplete="username"
-                  value={username}
-                  onChange={(event) => setUsername(event.target.value)}
-                  className="mt-1.5 w-full rounded-xl border border-stone-300 px-3.5 py-3 font-normal outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                />
-              </label>
-              <label className="block text-sm font-semibold text-stone-700">
-                Kata sandi
-                <input
-                  required
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  className="mt-1.5 w-full rounded-xl border border-stone-300 px-3.5 py-3 font-normal outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                />
-              </label>
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-deep px-4 py-3 font-bold text-white transition hover:bg-emerald-light disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                {isSubmitting ? "Memeriksa..." : "Masuk"}
-              </button>
-            </>
-          )}
+          <label className="block text-sm font-semibold text-stone-700">
+            Nama pengguna
+            <input
+              required
+              autoComplete="username"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              className="mt-1.5 w-full rounded-xl border border-stone-300 px-3.5 py-3 font-normal outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+            />
+          </label>
+          <label className="block text-sm font-semibold text-stone-700">
+            Kata sandi
+            <input
+              required
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className="mt-1.5 w-full rounded-xl border border-stone-300 px-3.5 py-3 font-normal outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-deep px-4 py-3 font-bold text-white transition hover:bg-emerald-light disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+            {isSubmitting ? "Memeriksa..." : "Masuk"}
+          </button>
         </form>
       </section>
     </main>
