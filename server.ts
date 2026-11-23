@@ -1890,8 +1890,8 @@ app.post("/api/chat-kitab", async (req, res) => {
   const taqriratFormatting = isTaqriratAlfiyah
     ? `\nInstruksi khusus Taqrirat Alfiyah:
   - "Qouluhu ..." (قوله) berarti "perkataan/ungkapan beliau ..."; lafaz setelahnya adalah petikan matan Alfiyah yang sedang diuraikan, bukan bait baru.
-  - Bila pengguna menyebut lafaz atau bait tertentu, jelaskan dulu petikan itu, maknanya, susunan nahwunya, dan kaidah yang dibahas.
-  - Jika pengguna tidak menyertakan lafaz/bait dan Anda tidak yakin dengan redaksi persisnya, jangan mengarang kutipan Arab atau nomor halaman. Terangkan pola Qouluhu secara umum dan minta pengguna mengirim lafaz atau foto halaman untuk syarah yang tepat.
+  - Untuk setiap pertanyaan, usahakan menyertakan bait matan Alfiyah berbahasa Arab yang relevan, lalu jelaskan makna, susunan nahwu, dan kaidah yang dibahas. Bait matan adalah teks kitab, bukan otomatis dalil syar'i.
+  - Jika lafaz yang relevan tidak dapat dipastikan, jangan mengarang atau mengganti dengan bait yang tidak terkait. Kembalikan dalil sebagai array kosong, lalu minta pengguna mengirim lafaz atau foto halaman agar dapat ditahqiq.
   - Perlakukan identitas sebagai edisi taqrirat yang dikaitkan dengan kajian Lirboyo; jangan mengarang nama penyusun taqrirat, isi halaman, atau klaim bahwa Anda memiliki naskah lengkap.`
     : "";
 
@@ -1905,7 +1905,8 @@ app.post("/api/chat-kitab", async (req, res) => {
 
   Keterbatasan sumber dan rujukan:
   - Katalog aplikasi hanya menyediakan metadata dan ringkasan kitab, bukan naskah lengkap. Jangan mengklaim memiliki teks lengkap atau mengarang kutipan Arab, dalil, edisi, juz, bab, maupun nomor halaman.
-  - Cantumkan kutipan/dalil hanya jika redaksinya dan sumbernya dapat dipastikan. Jika tidak dapat dipastikan, kembalikan array dalil kosong dan jelaskan keterbatasan sumber dalam content.
+  - Untuk setiap kitab, usahakan tampilkan 1-3 ibarat/matan Arab langsung dari kitab terpilih yang relevan dengan pertanyaan. Untuk kitab nazam seperti Alfiyah, kutip bait nazam yang relevan dan tandai sebagai matan, bukan dalil syar'i. Untuk kitab hadits, kutip matan hadits; untuk kitab tafsir, bedakan ayat dari tafsir.
+  - Cantumkan kutipan hanya jika redaksi Arab dan keterkaitannya dengan kitab dapat dipastikan. Jangan mengarang teks hanya demi memenuhi permintaan. Jika tidak dapat dipastikan, kembalikan array dalil kosong dan jelaskan secara eksplisit dalam content bahwa ibarat Arab belum dapat diverifikasi; minta pengguna mengirim foto halaman/edisi kitab.
   - Nomor halaman hanya boleh dicantumkan jika tampak dan dapat dihubungkan dengan jelas ke edisi kitab yang dirujuk. Jika belum terverifikasi, katakan "nomor halaman belum terverifikasi" dan minta pengguna menyertakan edisi atau foto halaman kitab yang relevan.
   
   Santri/Pengguna menanyakan: "${latestUserMessage || "Mohon baca, terjemahkan bila perlu, dan kaji soal pada gambar yang dilampirkan."}".
@@ -1914,8 +1915,8 @@ app.post("/api/chat-kitab", async (req, res) => {
   ${conversationHistory}
   
   ${isTaqriratAlfiyah
-    ? "Tugas: berikan penjelasan dalam content. Gunakan pola Qouluhu (قوله) hanya untuk lafaz matan yang benar-benar diketahui atau diberikan pengguna. Isi dalil hanya dengan kutipan Arab, terjemahan, dan rujukan yang dapat dipastikan; selain itu gunakan array kosong dan jelaskan keterbatasan sumber. Jangan menulis salam atau pengantar panjang."
-    : "Tugas: jawab pertanyaan dengan penjelasan ringkas dalam content. Isi dalil dengan kutipan teks Arab, terjemahan Indonesia, dan rujukan hanya jika redaksi dan sumbernya dapat dipastikan; jika tidak, gunakan array kosong. Jangan menulis salam atau pengantar panjang."}`;
+    ? "Tugas: jawab dengan penjelasan ringkas dalam content dan sertakan bait Alfiyah yang relevan pada dalil bila redaksinya dapat dipastikan. Jelaskan bait sebagai matan, bukan dalil syar'i. Jangan menulis salam atau pengantar panjang."
+    : "Tugas: jawab dengan penjelasan ringkas dalam content dan sertakan 1-3 ibarat Arab dari kitab terpilih yang relevan pada dalil bila redaksi dan sumbernya dapat dipastikan. Untuk kitab selain Alfiyah, berikan teks kitab/hadits/ayat yang memang menjadi bahan kitab, bukan dalil umum yang tidak terkait. Jangan menulis salam atau pengantar panjang."}`;
 
   try {
     const generatePromise = ai.models.generateContent({
@@ -1931,8 +1932,8 @@ app.post("/api/chat-kitab", async (req, res) => {
         : prompt,
       config: {
         systemInstruction: isTaqriratAlfiyah
-          ? "Anda adalah pendamping kajian Alfiyah dan Taqrirat Alfiyah di Pesantren KHARISMA. Bedakan matan Alfiyah dari uraian taqrirat, jelaskan penanda Qouluhu (قوله) dengan tepat, dan jangan mengarang kutipan atau nomor halaman yang tidak tersedia. Jawab dalam format JSON sesuai schema."
-          : "Anda adalah asisten kajian Kitab Turath (Kitab Kuning) di Pesantren KHARISMA. Jangan mengarang teks kitab, kutipan, edisi, atau nomor halaman. Bedakan informasi katalog dari sumber primer; jika sumber tidak tersedia, nyatakan keterbatasannya. Jawab dalam format JSON sesuai schema.",
+          ? "Anda adalah pendamping kajian Alfiyah dan Taqrirat Alfiyah di Pesantren KHARISMA. Untuk setiap jawaban, sertakan bait matan Arab yang relevan bila redaksinya dapat dipastikan; jelaskan bait sebagai matan nahwu, bukan dalil syar'i. Bedakan matan dari uraian taqrirat, dan jangan mengarang teks atau nomor halaman. Jika bait tidak dapat diverifikasi, jelaskan keterbatasannya dan minta foto halaman. Jawab dalam format JSON sesuai schema."
+          : "Anda adalah asisten kajian Kitab Turath (Kitab Kuning) di Pesantren KHARISMA. Untuk setiap jawaban, sertakan ibarat Arab dari kitab terpilih yang relevan bila redaksinya dapat dipastikan. Jangan mengarang teks, kutipan, edisi, atau nomor halaman. Bedakan ibarat kitab dari dalil syar'i dan nyatakan keterbatasan sumber bila teks tidak tersedia. Jawab dalam format JSON sesuai schema.",
         thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
         responseMimeType: "application/json",
         responseSchema: {
@@ -1945,8 +1946,8 @@ app.post("/api/chat-kitab", async (req, res) => {
             dalil: {
               type: Type.ARRAY,
               description: isTaqriratAlfiyah
-                ? "Kutipan matan yang dapat dipastikan; gunakan array kosong jika redaksi sumber tidak tersedia."
-                : "Kutipan yang sumber dan redaksinya dapat dipastikan; gunakan array kosong jika tidak dapat diverifikasi.",
+                ? "Bait matan Alfiyah berbahasa Arab yang relevan, terjemahannya, dan rujukan. Bait ini adalah matan kaidah nahwu, bukan otomatis dalil syar'i. Gunakan array kosong hanya jika teks tidak dapat dipastikan."
+                : "Ibarat/matan Arab langsung dari kitab yang dipilih, relevan dengan pertanyaan, beserta terjemahan dan rujukan. Gunakan array kosong hanya jika teks sumber tidak dapat dipastikan; jangan menggantinya dengan kutipan kitab lain.",
               items: {
                 type: Type.OBJECT,
                 properties: {
@@ -1962,7 +1963,7 @@ app.post("/api/chat-kitab", async (req, res) => {
                   },
                   rujukan: {
                     type: Type.STRING,
-                    description: "Nama kitab, bab, juz/halaman."
+                    description: "Nama kitab dan bab yang tepat; cantumkan juz/halaman hanya jika dapat diverifikasi. Sebutkan bila nomor halaman belum terverifikasi."
                   }
                 },
                 required: ["teksArab", "terjemahan", "rujukan"]
