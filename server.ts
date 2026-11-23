@@ -149,6 +149,26 @@ if (geminiApiKey) {
 // ---------------------------------------------------------
 const kitabCatalog = [
   {
+    id: "fathul-muin",
+    title: "Fathul Mu'in bi Syarh Qurratil 'Ain",
+    author: "Al-'Allamah Zainuddin bin Abdul Aziz al-Malibari",
+    category: "Fiqh (Yurisprudensi)",
+    madzhab: "Syafii",
+    era: "Abad ke-10 Hijriah",
+    difficulty: "Tinggi",
+    description: "Kitab fikih Syafi'i rinci yang menjadi syarah atas matan Qurratul 'Ain karya Syekh Zainuddin al-Malibari. Kitab ini banyak dijadikan rujukan lanjutan dalam kajian pesantren salaf.",
+    summary: "Fathul Mu'in membahas fikih madzhab Syafi'i secara luas dan mendalam, dimulai dari ketentuan bersuci, sholat, zakat, puasa, dan haji, lalu dilanjutkan pada muamalah, perkawinan, pidana, peradilan, pembebasan hamba, waris, dan bab-bab fikih lainnya. Uraian kitab menguatkan kaidah, syarat, rukun, halangan, serta khilaf ulama dengan merujuk kepada pendapat-pendapat mu'tabar madzhab.",
+    chapters: [
+      { id: "fm-1", name: "Kitab Ath-Thaharah (Bab Bersuci dan Hadats)", pages: "Jilid 1" },
+      { id: "fm-2", name: "Kitab Ash-Shalah (Bab Sholat dan Jenazah)", pages: "Jilid 1" },
+      { id: "fm-3", name: "Kitab Az-Zakah, Ash-Shiyam, dan Al-Hajj", pages: "Jilid 1" },
+      { id: "fm-4", name: "Kitab Al-Buyu' dan Uquud (Jual-Beli serta Akad)", pages: "Jilid 2" },
+      { id: "fm-5", name: "Kitab Nikah, Thalaq, dan Hadhanah", pages: "Jilid 2" },
+      { id: "fm-6", name: "Kitab Jinayat, Qadha, dan Faraidh", pages: "Jilid 2" }
+    ],
+    tags: ["fiqh", "syafii", "pesantren", "fathul-muin", "syarah", "malibari"]
+  },
+  {
     id: "fathul-qarib",
     title: "Fathul Qarib Al-Mujib",
     author: "Syekh Muhammad bin Qasim Al-Ghazi",
