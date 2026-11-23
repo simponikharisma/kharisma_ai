@@ -1,14 +1,11 @@
 import express from "express";
-import path from "path";
 import dotenv from "dotenv";
 import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
-import { createServer as createViteServer } from "vite";
 
 dotenv.config();
 
 const app = express();
 export default app;
-const PORT = Number(process.env.PORT) || 3003;
 const AI_MODEL = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
 const AI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS) || 90000;
 
@@ -1593,33 +1590,3 @@ app.post("/api/voice/speak", async (req, res) => {
     return res.status(500).json({ error: "Gagal membuat audio, gunakan fallback lokal." });
   }
 });
-
-
-// ---------------------------------------------------------
-// VITE OR STATIC SERVING MIDDLEWARE
-// ---------------------------------------------------------
-async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
-    console.log("Starting server in DEVELOPMENT mode with Vite Middleware...");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    console.log("Starting server in PRODUCTION mode...");
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
-
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server KHARISMA running on: http://0.0.0.0:${PORT}`);
-  });
-}
-
-if (process.env.VERCEL !== "1") {
-  startServer();
-}
