@@ -19,6 +19,8 @@ import {
   ArrowRight,
   BookOpenCheck,
   Send,
+  Camera,
+  ImagePlus,
   User,
   Loader2,
   AlertCircle,
@@ -42,6 +44,83 @@ const CATEGORIES = [
 ];
 
 const hasArabicScript = (text?: string) => /[\u0600-\u06FF]/.test(text || "");
+const MAX_KITAB_IMAGE_COUNT = 4;
+const MAX_KITAB_IMAGE_SIZE_BYTES = 1_200_000;
+const MAX_KITAB_IMAGES_SIZE_BYTES = 2_400_000;
+const MAX_ORIGINAL_KITAB_IMAGE_SIZE_BYTES = 15_000_000;
+const SUPPORTED_KITAB_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+async function prepareKitabImage(file: File): Promise<File> {
+  if (!SUPPORTED_KITAB_IMAGE_TYPES.has(file.type)) {
+    throw new Error("Format gambar tidak didukung. Pilih JPEG, PNG, atau WebP.");
+  }
+  if (file.size > MAX_ORIGINAL_KITAB_IMAGE_SIZE_BYTES) {
+    throw new Error("Ukuran gambar asli melebihi 15 MB.");
+  }
+  if (file.size <= MAX_KITAB_IMAGE_SIZE_BYTES) return file;
+
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    throw new Error(`Gambar ${file.name} tidak dapat dibaca oleh browser.`);
+  }
+
+  try {
+    if (bitmap.width * bitmap.height > 30_000_000) {
+      throw new Error(`Resolusi gambar ${file.name} terlalu tinggi untuk diproses dengan aman.`);
+    }
+
+    const renderJpeg = async (maxDimension: number, quality: number) => {
+      const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Browser tidak dapat memproses gambar.");
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      return new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((blob) => {
+          if (blob) resolve(blob);
+          else reject(new Error("Gambar tidak dapat diperkecil."));
+        }, "image/jpeg", quality);
+      });
+    };
+
+    let optimized = await renderJpeg(2200, 0.84);
+    if (optimized.size > MAX_KITAB_IMAGE_SIZE_BYTES) {
+      optimized = await renderJpeg(1600, 0.72);
+    }
+    if (optimized.size > MAX_KITAB_IMAGE_SIZE_BYTES) {
+      throw new Error(`Gambar ${file.name} masih terlalu besar setelah diperkecil.`);
+    }
+
+    const baseName = file.name.replace(/\.[^.]+$/, "") || "soal";
+    return new File([optimized], `${baseName}.jpg`, { type: "image/jpeg", lastModified: file.lastModified });
+  } finally {
+    bitmap.close();
+  }
+}
+
+function readImageAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error(`Gambar ${file.name} tidak dapat disiapkan untuk dikirim.`));
+        return;
+      }
+      const separatorIndex = reader.result.indexOf(",");
+      if (separatorIndex < 0) {
+        reject(new Error(`Data gambar ${file.name} tidak valid.`));
+        return;
+      }
+      resolve(reader.result.slice(separatorIndex + 1));
+    };
+    reader.onerror = () => reject(new Error(`Gambar ${file.name} gagal dibaca.`));
+    reader.readAsDataURL(file);
+  });
+}
 
 // Premade questions for Bahtsul Masa'il (Mas'alah Board)
 const PREMADE_QUESTIONS = [
@@ -133,6 +212,7 @@ interface BahtsulMasailResult {
 interface ChatMessage {
   role: "user" | "model";
   content: string;
+  attachments?: string[];
   dalil?: { teksArab: string; terjemahan: string; rujukan: string }[];
 }
 
@@ -241,6 +321,12 @@ export default function App() {
   const [kitabInput, setKitabInput] = useState("");
   const [isSendingToKitab, setIsSendingToKitab] = useState(false);
   const [showChatArea, setShowChatArea] = useState(false);
+  const [kitabImageAttachments, setKitabImageAttachments] = useState<File[]>([]);
+  const [kitabImagePreviews, setKitabImagePreviews] = useState<{ name: string; url: string }[]>([]);
+  const [isPreparingKitabImages, setIsPreparingKitabImages] = useState(false);
+  const [kitabChatError, setKitabChatError] = useState<string | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
 
   // Tab 3: Glossary & Translator (Pegon & Arab Turath)
@@ -315,6 +401,12 @@ export default function App() {
       chatBottomRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [kitabMessages, isSendingToKitab, showChatArea]);
+
+  useEffect(() => {
+    const previews = kitabImageAttachments.map((file) => ({ name: file.name, url: URL.createObjectURL(file) }));
+    setKitabImagePreviews(previews);
+    return () => previews.forEach(({ url }) => URL.revokeObjectURL(url));
+  }, [kitabImageAttachments]);
 
   // Rotate loading wisdom texts
   useEffect(() => {
@@ -550,25 +642,64 @@ export default function App() {
     }
   };
 
+  const handleAddKitabImages = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles: File[] = e.currentTarget.files ? Array.from(e.currentTarget.files) : [];
+    e.currentTarget.value = "";
+    if (selectedFiles.length === 0) return;
+    setKitabChatError(null);
+
+    if (kitabImageAttachments.length + selectedFiles.length > MAX_KITAB_IMAGE_COUNT) {
+      setKitabChatError(`Maksimal ${MAX_KITAB_IMAGE_COUNT} gambar untuk satu pertanyaan.`);
+      return;
+    }
+
+    setIsPreparingKitabImages(true);
+    try {
+      const preparedFiles: File[] = [];
+      for (const file of selectedFiles) {
+        preparedFiles.push(await prepareKitabImage(file));
+      }
+
+      const totalSize = [...kitabImageAttachments, ...preparedFiles].reduce((total, file) => total + file.size, 0);
+      if (totalSize > MAX_KITAB_IMAGES_SIZE_BYTES) {
+        throw new Error("Total ukuran gambar maksimal 2,4 MB setelah diproses.");
+      }
+
+      setKitabImageAttachments((current) => [...current, ...preparedFiles]);
+    } catch (error) {
+      setKitabChatError(error instanceof Error ? error.message : "Gambar tidak dapat diproses.");
+    } finally {
+      setIsPreparingKitabImages(false);
+    }
+  };
+
   const handleSendKitabMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!kitabInput.trim() || !selectedKitabId) return;
+    const userPrompt = kitabInput.trim();
+    if ((!userPrompt && kitabImageAttachments.length === 0) || !selectedKitabId || isPreparingKitabImages) return;
 
     const currentKitab = books.find(b => b.id === selectedKitabId);
     if (!currentKitab) return;
 
-    const userMessage: ChatMessage = { role: "user", content: kitabInput };
-    const updatedMessages = [...kitabMessages, userMessage];
-    const userPrompt = kitabInput;
-    
+    const userMessage: ChatMessage = {
+      role: "user",
+      content: userPrompt || "Mohon baca dan kaji soal pada gambar terlampir.",
+      attachments: kitabImageAttachments.map((file) => file.name)
+    };
+    const previousMessages = kitabMessages;
+    const updatedMessages = [...previousMessages, userMessage];
     setKitabMessages(updatedMessages);
-    setKitabInput("");
+    setKitabChatError(null);
     setIsSendingToKitab(true);
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 45000);
+    const timeoutId = setTimeout(() => controller.abort(), kitabImageAttachments.length > 0 ? 100000 : 45000);
 
     try {
+      const images = await Promise.all(kitabImageAttachments.map(async (file) => ({
+        mimeType: file.type,
+        data: await readImageAsBase64(file)
+      })));
       const res = await fetch("/api/chat-kitab", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -576,20 +707,30 @@ export default function App() {
         body: JSON.stringify({
           kitabId: selectedKitabId,
           kitabTitle: currentKitab.title,
-          messages: updatedMessages
+          messages: updatedMessages.map(({ role, content }) => ({ role, content })),
+          images
         })
       });
-      clearTimeout(timeoutId);
-      const data = await res.json();
-      setKitabMessages(prev => [...prev, data]);
-    } catch (error) {
-      clearTimeout(timeoutId);
-      console.warn("Kitab companion fallback triggered:", error);
-      setKitabMessages(prev => [...prev, { 
-        role: "model", 
-        content: `Santriku yang dirahmati Allah, mengenai pertanyaanmu tentang "${userPrompt}" dalam Kitab ${currentKitab.title}: Mualif (${currentKitab.author}) senantiasa membimbing kita untuk mendalami ilmu dengan adab, thaharah batin, dan keikhlasan. Setiap bab dalam kitab turath ini sarat dengan hikmah yang menuntun santri menuju ketenangan lahir dan batin. Istiqamahlah dalam mengkaji makna-maknanya.`
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : `Permintaan kajian gagal (HTTP ${res.status}).`);
+      }
+      if (!data || data.role !== "model" || typeof data.content !== "string") {
+        throw new Error("Respons kajian tidak lengkap. Silakan coba lagi.");
+      }
+
+      setKitabMessages([...updatedMessages, {
+        role: "model",
+        content: data.content,
+        dalil: Array.isArray(data.dalil) ? data.dalil : []
       }]);
+      setKitabInput("");
+      setKitabImageAttachments([]);
+    } catch (error) {
+      setKitabMessages(previousMessages);
+      setKitabChatError(error instanceof Error ? error.message : "Gagal mengirim pertanyaan. Silakan coba lagi.");
     } finally {
+      clearTimeout(timeoutId);
       setIsSendingToKitab(false);
     }
   };
@@ -599,6 +740,9 @@ export default function App() {
     if (!currentKitab) return;
 
     // Reset and initialize chat session
+    setKitabInput("");
+    setKitabImageAttachments([]);
+    setKitabChatError(null);
     setKitabMessages([
       {
         role: "model",
@@ -1638,6 +1782,9 @@ export default function App() {
                                   : "bg-white border border-stone-200/90 text-gray-800 rounded-tl-none shadow-sm"
                               }`}>
                                 {Boolean(msg.content?.trim()) && <p className="whitespace-pre-wrap">{msg.content}</p>}
+                                {msg.role === "user" && msg.attachments && msg.attachments.length > 0 && (
+                                  <p className="mt-2 text-xs text-white/75">Gambar terlampir: {msg.attachments.join(", ")}</p>
+                                )}
                                 {msg.role === "model" && msg.dalil && msg.dalil.length > 0 && (
                                   <div className="mt-3 space-y-2">
                                     {msg.dalil.map((d, di) => (
@@ -1695,24 +1842,100 @@ export default function App() {
                         </div>
 
                         {/* Input chat bar */}
-                        <form onSubmit={handleSendKitabMessage} className="p-3.5 bg-white border-t border-stone-200 flex gap-2 items-center">
-                          <input
-                            type="text"
-                            dir="auto"
-                            value={kitabInput}
-                            onChange={(e) => setKitabInput(e.target.value)}
-                            placeholder={`Tanyakan bab atau hujah kitab ${selectedKitab.title}...`}
-                            disabled={isSendingToKitab}
-                            className="flex-grow text-base p-3 rounded-xl border border-stone-300 outline-none focus:ring-2 focus:ring-emerald-deep/20 focus:border-emerald-deep bg-stone-50/50"
-                          />
-                          <button
-                            type="submit"
-                            disabled={isSendingToKitab || !kitabInput.trim()}
-                            className="bg-emerald-deep text-white hover:bg-emerald-light p-3 rounded-xl transition disabled:bg-stone-300 min-h-[44px] min-w-[44px] flex items-center justify-center shadow-xs"
-                            title="Kirim pertanyaan"
-                          >
-                            <Send className="w-4 h-4" />
-                          </button>
+                        <form onSubmit={handleSendKitabMessage} className="p-3.5 bg-white border-t border-stone-200 flex flex-col gap-3">
+                          {kitabImagePreviews.length > 0 && (
+                            <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Gambar soal terlampir">
+                              {kitabImagePreviews.map((preview, index) => (
+                                <div key={`${preview.name}-${index}`} className="relative flex-shrink-0 w-24 rounded-lg border border-stone-200 bg-stone-50 p-1.5">
+                                  <img src={preview.url} alt={`Pratinjau ${preview.name}`} className="w-full h-16 object-cover rounded" />
+                                  <p className="text-[9px] text-stone-600 truncate mt-1" title={preview.name}>{preview.name}</p>
+                                  <button
+                                    type="button"
+                                    onClick={() => setKitabImageAttachments((current) => current.filter((_, fileIndex) => fileIndex !== index))}
+                                    disabled={isSendingToKitab || isPreparingKitabImages}
+                                    className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-700 text-white flex items-center justify-center shadow disabled:bg-stone-400"
+                                    aria-label={`Hapus gambar ${preview.name}`}
+                                    title="Hapus gambar"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {kitabChatError && (
+                            <p role="alert" className="text-xs text-red-700 flex items-start gap-1.5">
+                              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                              <span>{kitabChatError}</span>
+                            </p>
+                          )}
+
+                          <div className="flex gap-2 items-center">
+                            <input
+                              ref={cameraInputRef}
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp"
+                              capture="environment"
+                              onChange={handleAddKitabImages}
+                              className="hidden"
+                              aria-label="Ambil foto soal"
+                            />
+                            <input
+                              ref={galleryInputRef}
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp"
+                              multiple
+                              onChange={handleAddKitabImages}
+                              className="hidden"
+                              aria-label="Pilih gambar soal"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => cameraInputRef.current?.click()}
+                              disabled={isSendingToKitab || isPreparingKitabImages || kitabImageAttachments.length >= MAX_KITAB_IMAGE_COUNT}
+                              className="bg-stone-100 text-emerald-deep hover:bg-emerald-50 p-3 rounded-xl border border-stone-200 transition disabled:text-stone-400 min-h-[44px] min-w-[44px] flex items-center justify-center"
+                              title="Ambil foto soal"
+                              aria-label="Ambil foto soal"
+                            >
+                              <Camera className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => galleryInputRef.current?.click()}
+                              disabled={isSendingToKitab || isPreparingKitabImages || kitabImageAttachments.length >= MAX_KITAB_IMAGE_COUNT}
+                              className="bg-stone-100 text-emerald-deep hover:bg-emerald-50 p-3 rounded-xl border border-stone-200 transition disabled:text-stone-400 min-h-[44px] min-w-[44px] flex items-center justify-center"
+                              title="Pilih gambar dari perangkat"
+                              aria-label="Pilih gambar soal dari perangkat"
+                            >
+                              {isPreparingKitabImages ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <ImagePlus className="w-4 h-4" />
+                              )}
+                            </button>
+                            <input
+                              type="text"
+                              dir="auto"
+                              value={kitabInput}
+                              onChange={(e) => {
+                                setKitabInput(e.target.value);
+                                setKitabChatError(null);
+                              }}
+                              placeholder="Tanyakan bab/hujjah, atau lampirkan foto soal/halaman kitab..."
+                              disabled={isSendingToKitab || isPreparingKitabImages}
+                              className="flex-grow min-w-0 text-base p-3 rounded-xl border border-stone-300 outline-none focus:ring-2 focus:ring-emerald-deep/20 focus:border-emerald-deep bg-stone-50/50"
+                            />
+                            <button
+                              type="submit"
+                              disabled={isSendingToKitab || isPreparingKitabImages || (!kitabInput.trim() && kitabImageAttachments.length === 0)}
+                              className="bg-emerald-deep text-white hover:bg-emerald-light p-3 rounded-xl transition disabled:bg-stone-300 min-h-[44px] min-w-[44px] flex items-center justify-center shadow-xs"
+                              title="Kirim pertanyaan"
+                            >
+                              <Send className="w-4 h-4" />
+                            </button>
+                          </div>
+                          <p className="text-[10px] text-stone-500">JPEG, PNG, atau WebP. Maksimal 4 gambar; dikirim ke Gemini untuk analisis dan tidak disimpan oleh aplikasi.</p>
                         </form>
                       </div>
                     )}
