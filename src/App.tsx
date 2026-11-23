@@ -223,6 +223,7 @@ export default function App() {
   const [isSpeechPlaying, setIsSpeechPlaying] = useState(false);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const [isVoiceLoading, setIsVoiceLoading] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // Tab 2: Maktabah Library Catalog
@@ -329,15 +330,12 @@ export default function App() {
     setTimeout(() => setArabicCopySuccess(false), 2000);
   };
 
-  // Human-like Indonesian Voice Engine (Server Gemini TTS with Natural Browser Fallback)
+  // Use generated speech only; browser speech synthesis sounds robotic and cannot reliably read Arabic.
   const stopVoice = () => {
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current.currentTime = 0;
       currentAudioRef.current = null;
-    }
-    if (typeof window !== "undefined" && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
     }
     setIsSpeechPlaying(false);
     setPlayingVoiceId(null);
@@ -345,47 +343,6 @@ export default function App() {
   };
 
   const stopTTS = () => stopVoice();
-
-  const fallbackBrowserSpeech = (text: string, voiceId: string) => {
-    if (typeof window === "undefined" || !window.speechSynthesis) {
-      setIsVoiceLoading(false);
-      setPlayingVoiceId(null);
-      setIsSpeechPlaying(false);
-      return;
-    }
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "id-ID";
-    utterance.rate = 0.95;
-    utterance.pitch = 0.95;
-
-    // Pick natural Indonesian voice if available
-    const voices = window.speechSynthesis.getVoices();
-    const indonesianVoice = voices.find(
-      (v) => v.lang.toLowerCase().includes("id") || v.name.toLowerCase().includes("indonesia")
-    );
-    if (indonesianVoice) {
-      utterance.voice = indonesianVoice;
-    }
-
-    utterance.onstart = () => {
-      setIsSpeechPlaying(true);
-      setIsVoiceLoading(false);
-    };
-
-    utterance.onend = () => {
-      setIsSpeechPlaying(false);
-      setPlayingVoiceId(null);
-    };
-
-    utterance.onerror = () => {
-      setIsSpeechPlaying(false);
-      setPlayingVoiceId(null);
-      setIsVoiceLoading(false);
-    };
-
-    window.speechSynthesis.speak(utterance);
-  };
 
   const playHumanVoice = async (textToSpeak: string, voiceId: string = "default") => {
     // If clicking same active voice that is playing or loading, toggle stop
@@ -395,12 +352,12 @@ export default function App() {
     }
 
     stopVoice();
+    setVoiceError(null);
     setPlayingVoiceId(voiceId);
     setIsVoiceLoading(true);
 
-    // Clean text: strip Arabic script (handled separately visually) and markdown
+    // Keep Arabic script intact so generated speech can pronounce it.
     const cleanedText = textToSpeak
-      .replace(/[\u0600-\u06FF]/g, "")
       .replace(/[*_#`~]/g, "")
       .replace(/\s+/g, " ")
       .trim();
@@ -418,36 +375,45 @@ export default function App() {
         body: JSON.stringify({ text: cleanedText })
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.audioData) {
-          const audio = new Audio(data.audioData);
-          currentAudioRef.current = audio;
-
-          audio.onplay = () => {
-            setIsSpeechPlaying(true);
-            setIsVoiceLoading(false);
-          };
-
-          audio.onended = () => {
-            setIsSpeechPlaying(false);
-            setPlayingVoiceId(null);
-            currentAudioRef.current = null;
-          };
-
-          audio.onerror = () => {
-            console.warn("Audio element error, falling back to browser speech.");
-            fallbackBrowserSpeech(cleanedText, voiceId);
-          };
-
-          await audio.play();
-          return;
-        }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || "Suara manusia belum berhasil dibuat.");
       }
-      throw new Error("Server audio not available");
+      if (!data.audioData) {
+        throw new Error("Audio suara manusia tidak tersedia.");
+      }
+
+      const audio = new Audio(data.audioData);
+      currentAudioRef.current = audio;
+
+      audio.onplay = () => {
+        setIsSpeechPlaying(true);
+        setIsVoiceLoading(false);
+      };
+
+      audio.onended = () => {
+        setIsSpeechPlaying(false);
+        setPlayingVoiceId(null);
+        currentAudioRef.current = null;
+      };
+
+      audio.onerror = () => {
+        console.warn("Generated audio could not be played.");
+        setVoiceError("Audio suara manusia tidak dapat diputar. Silakan coba lagi.");
+        setIsSpeechPlaying(false);
+        setIsVoiceLoading(false);
+        setPlayingVoiceId(null);
+        currentAudioRef.current = null;
+      };
+
+      await audio.play();
     } catch (err) {
-      console.warn("Using browser natural Indonesian voice fallback:", err);
-      fallbackBrowserSpeech(cleanedText, voiceId);
+      console.warn("Generated human voice unavailable:", err);
+      setVoiceError(err instanceof Error ? err.message : "Suara manusia belum berhasil dibuat. Silakan coba lagi.");
+      setIsSpeechPlaying(false);
+      setIsVoiceLoading(false);
+      setPlayingVoiceId(null);
+      currentAudioRef.current = null;
     }
   };
 
@@ -900,6 +866,12 @@ export default function App() {
       </nav>
 
       {/* Main Workspace Frame container (with pb-20 on mobile for bottom bar comfort) */}
+      {voiceError && (
+        <div className="mx-3 mt-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950" role="alert">
+          {voiceError}
+        </div>
+      )}
+
       <main className="flex-grow max-w-7xl w-full mx-auto p-3.5 sm:p-6 md:p-8 flex flex-col gap-5 sm:gap-6 pb-24 sm:pb-8">
 
         {/* Tab 1: Majelis Bahtsul Masa'il (Asisten Solusi Hukum) */}

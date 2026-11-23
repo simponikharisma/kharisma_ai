@@ -6,6 +6,9 @@
     },
     "api/kamus/translate.ts": {
       "includeFiles": "server.ts"
+    },
+    "api/voice/speak.ts": {
+      "includeFiles": "server.ts"
     }
   }
 }
