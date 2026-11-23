@@ -48,6 +48,7 @@ const MAX_KITAB_IMAGE_COUNT = 4;
 const MAX_KITAB_IMAGE_SIZE_BYTES = 1_200_000;
 const MAX_KITAB_IMAGES_SIZE_BYTES = 2_400_000;
 const MAX_ORIGINAL_KITAB_IMAGE_SIZE_BYTES = 15_000_000;
+const AI_REQUEST_TIMEOUT_MS = 190_000;
 const SUPPORTED_KITAB_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 async function prepareKitabImage(file: File): Promise<File> {
@@ -597,7 +598,7 @@ export default function App() {
     }, 100);
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 45000);
+    const timeoutId = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT_MS);
 
     try {
       const res = await fetch("/api/bahtsul-masail", {
@@ -693,7 +694,7 @@ export default function App() {
     setIsSendingToKitab(true);
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), kitabImageAttachments.length > 0 ? 100000 : 45000);
+    const timeoutId = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT_MS);
 
     try {
       const images = await Promise.all(kitabImageAttachments.map(async (file) => ({
@@ -728,7 +729,13 @@ export default function App() {
       setKitabImageAttachments([]);
     } catch (error) {
       setKitabMessages(previousMessages);
-      setKitabChatError(error instanceof Error ? error.message : "Gagal mengirim pertanyaan. Silakan coba lagi.");
+      setKitabChatError(
+        error instanceof Error && error.name === "AbortError"
+          ? "Permintaan AI terlalu lama. Silakan coba lagi."
+          : error instanceof Error
+            ? error.message
+            : "Gagal mengirim pertanyaan. Silakan coba lagi."
+      );
     } finally {
       clearTimeout(timeoutId);
       setIsSendingToKitab(false);
@@ -792,7 +799,7 @@ export default function App() {
     setKamusResponse(null);
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30000);
+    const timer = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT_MS);
     try {
       const res = await fetch("/api/kamus/translate", {
         method: "POST",

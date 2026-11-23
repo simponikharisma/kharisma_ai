@@ -129,6 +129,9 @@ app.use("/api", (req, res, next) => {
 
 // Initialize Gemini SDK with telemetry header
 const geminiApiKey = process.env.GEMINI_API_KEY;
+const openRouterApiKey = process.env.OPENROUTER_API_KEY?.trim();
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openrouter/auto";
+const OPENROUTER_MAX_OUTPUT_TOKENS = 1800;
 let ai: GoogleGenAI | null = null;
 
 if (geminiApiKey) {
@@ -141,7 +144,151 @@ if (geminiApiKey) {
     }
   });
 } else {
-  console.warn("GEMINI_API_KEY is not defined in the environment. Generative features will require configuration or return helpful fallbacks.");
+  console.warn(openRouterApiKey
+    ? "GEMINI_API_KEY is not defined. OpenRouter text fallback is enabled; voice synthesis still requires Gemini."
+    : "Neither GEMINI_API_KEY nor OPENROUTER_API_KEY is configured. Generative features will use local fallbacks.");
+}
+
+type GeminiJsonSchema = {
+  type?: string;
+  description?: string;
+  properties?: Record<string, GeminiJsonSchema>;
+  items?: GeminiJsonSchema;
+  required?: string[];
+};
+
+type GeminiUserContent = {
+  role: "user";
+  parts: Array<
+    | { text: string }
+    | { inlineData: { mimeType: string; data: string } }
+  >;
+};
+
+type OpenRouterContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string; detail: "auto" } };
+
+function isRetryableGeminiFailure(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const failure = error as { status?: number | string; code?: number | string; message?: string };
+  const status = Number(failure.status ?? failure.code);
+  return [408, 429, 500, 502, 503, 504].includes(status)
+    || /timeout|timed out|fetch failed|network|econnreset|etimedout|eai_again/i.test(failure.message || "");
+}
+
+function toOpenRouterSchema(schema: GeminiJsonSchema): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  if (schema.type) result.type = schema.type.toLowerCase();
+  if (schema.description) result.description = schema.description;
+  if (schema.items) result.items = toOpenRouterSchema(schema.items);
+  if (schema.properties) {
+    result.properties = Object.fromEntries(
+      Object.entries(schema.properties).map(([key, value]) => [key, toOpenRouterSchema(value)])
+    );
+    result.required = Object.keys(schema.properties);
+    result.additionalProperties = false;
+  }
+  return result;
+}
+
+function toOpenRouterContent(contents: string | GeminiUserContent): string | OpenRouterContentPart[] {
+  if (typeof contents === "string") return contents;
+  return contents.parts.map((part): OpenRouterContentPart => (
+    "text" in part
+      ? { type: "text", text: part.text }
+      : {
+          type: "image_url",
+          image_url: { url: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`, detail: "auto" }
+        }
+  ));
+}
+
+async function generateJsonWithProviderFallback(options: {
+  systemInstruction: string;
+  fallbackInstructions?: string;
+  responseSchema: GeminiJsonSchema;
+  userContent: string | GeminiUserContent;
+  generateGemini?: () => Promise<{ text?: string | null }>;
+}): Promise<string> {
+  if (options.generateGemini) {
+    try {
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      const response = await Promise.race([
+        options.generateGemini(),
+        new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error(`Generation timeout exceeded ${AI_TIMEOUT_MS / 1000}s`)), AI_TIMEOUT_MS);
+        })
+      ]).finally(() => {
+        if (timeoutId) clearTimeout(timeoutId);
+      });
+      if (!response.text) throw new Error("Respon kosong dari model Gemini.");
+      return response.text;
+    } catch (error) {
+      if (!openRouterApiKey || !isRetryableGeminiFailure(error)) throw error;
+      const failure = error as { status?: number | string; code?: number | string };
+      console.warn("Gemini is temporarily unavailable; trying OpenRouter.", failure.status || failure.code || "");
+    }
+  }
+
+  if (!openRouterApiKey) {
+    throw new Error("Layanan AI cadangan belum dikonfigurasi. Isi OPENROUTER_API_KEY untuk mengaktifkan fallback.");
+  }
+
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${openRouterApiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://kharismaai.vercel.app",
+      "X-Title": "Kharisma Pedia"
+    },
+    signal: AbortSignal.timeout(AI_TIMEOUT_MS),
+    body: JSON.stringify({
+      model: OPENROUTER_MODEL,
+      max_tokens: OPENROUTER_MAX_OUTPUT_TOKENS,
+      messages: [
+        {
+          role: "system",
+          content: `${options.systemInstruction}\n\n${options.fallbackInstructions || ""}\nKembalikan hanya JSON yang sesuai dengan JSON Schema berikut dan pastikan JSON lengkap:\n${JSON.stringify(toOpenRouterSchema(options.responseSchema))}`
+        },
+        { role: "user", content: toOpenRouterContent(options.userContent) }
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "kharisma_response",
+          strict: true,
+          schema: toOpenRouterSchema(options.responseSchema)
+        }
+      },
+      ...(OPENROUTER_MODEL === "openrouter/auto"
+        ? { plugins: [{ id: "auto-router", cost_tier: "low" }] }
+        : {}),
+      provider: { require_parameters: true, data_collection: "deny" }
+    })
+  });
+
+  const result = await response.json() as {
+    error?: { message?: string };
+    choices?: Array<{
+      finish_reason?: string;
+      message?: { content?: string | Array<{ type?: string; text?: string }> };
+    }>;
+  };
+  if (!response.ok) {
+    throw new Error(`OpenRouter request failed (${response.status}): ${result.error?.message || "unknown error"}`);
+  }
+  const choice = result.choices?.[0];
+  if (choice?.finish_reason === "length") {
+    throw new Error(`OpenRouter response reached the ${OPENROUTER_MAX_OUTPUT_TOKENS}-token limit before completing its JSON.`);
+  }
+  const content = choice?.message?.content;
+  const text = typeof content === "string"
+    ? content
+    : content?.filter((part) => part.type === "text").map((part) => part.text || "").join("");
+  if (!text?.trim()) throw new Error("OpenRouter returned an empty response.");
+  return text;
 }
 
 // ---------------------------------------------------------
@@ -1538,8 +1685,8 @@ app.post("/api/bahtsul-masail", async (req, res) => {
   }
 
   // 2. Fallback offline: preseeded database or local simulation when the service is unavailable
-  if (!ai) {
-    console.warn("Gemini API not configured, returning local simulation response.");
+  if (!ai && !openRouterApiKey) {
+    console.warn("No AI provider configured, returning local simulation response.");
     const preseeded = findPreseededRuling(cleanQuery);
     const fallback = preseeded || getFallbackBahtsulMasail(cleanQuery);
     bahtsulMasailCache.set(cacheKey, fallback);
@@ -1561,8 +1708,7 @@ app.post("/api/bahtsul-masail", async (req, res) => {
   - Ulasan ilmiah mendalam berdasarkan kaidah fiqh, illat, dan maslahah.
   - Khilaf: jika masalah ini memang diperselisihkan, isi field "khilaf" dengan 2-3 pendapat ulama yang berbeda (mis. Syafi'iyyah, Hanafiyah, Malikiyah, Hanabilah atau ulama muta'akhkhirin), masing-masing disertai dalil Arab berharakat, terjemahan, dan rujukan kitabnya. Pilih hanya pendapat yang paling pokok dan relevan, jangan berlebihan. Jika tidak ada khilaf yang mu'tabar, isi dengan array kosong [].`;
 
-  try {
-    const generatePromise = ai.models.generateContent({
+  const generationRequest = {
       model: AI_MODEL,
       contents: prompt,
       config: {
@@ -1634,18 +1780,17 @@ app.post("/api/bahtsul-masail", async (req, res) => {
           required: ["judul", "status", "ringkasan", "ibarat", "rujukan", "ulasan", "khilaf"]
         }
       }
+  };
+  const gemini = ai;
+
+  try {
+    const textOutput = await generateJsonWithProviderFallback({
+      systemInstruction: generationRequest.config.systemInstruction,
+      fallbackInstructions: "Untuk menjaga jawaban tetap lengkap dalam batas token, tulis ulasan maksimal 3 kalimat dan tampilkan paling banyak 2 pendapat khilaf yang benar-benar relevan. Ringkaskan setiap kutipan dan rujukan; jangan menambah pengantar atau mengarang sumber.",
+      responseSchema: generationRequest.config.responseSchema,
+      userContent: prompt,
+      generateGemini: gemini ? () => gemini.models.generateContent(generationRequest) : undefined
     });
-
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`Generation timeout exceeded ${AI_TIMEOUT_MS / 1000}s`)), AI_TIMEOUT_MS)
-    );
-
-    const response = (await Promise.race([generatePromise, timeoutPromise])) as any;
-
-    const textOutput = response.text;
-    if (!textOutput) {
-      throw new Error("Teks kosong yang dikembalikan oleh model.");
-    }
     const resultJson = JSON.parse(textOutput.trim());
     bahtsulMasailCache.set(cacheKey, resultJson);
     return res.json(resultJson);
@@ -1693,9 +1838,9 @@ app.post("/api/kamus/translate", async (req, res) => {
     return res.json(kamusCache.get(cacheKey));
   }
 
-  // 3. Fallback if Gemini unconfigured
-  if (!ai) {
-    console.warn("Gemini API not configured, returning local dictionary result.");
+  // 3. Fallback if no AI provider is configured
+  if (!ai && !openRouterApiKey) {
+    console.warn("No AI provider configured, returning local dictionary result.");
     const fallback = getFallbackKamusTranslate(cleanQuery, mode);
     return res.json(fallback);
   }
@@ -1724,67 +1869,66 @@ PANDUAN:
 3. Jika Istilah Fiqih / Ushul:
    - Berikan definisi syar'i dan contoh kasus riilnya.`;
 
-  try {
-    const generatePromise = ai.models.generateContent({
+  const systemInstruction = mode === "terjemah"
+    ? "Anda adalah penerjemah Arab dan Jawa Pegon ke Bahasa Indonesia. Untuk mode ini, berikan hanya terjemahan tanpa uraian kaidah. Jawab dalam format JSON."
+    : "Anda adalah Pakar Leksikografi Bahasa Arab Turath & Ahli Makna Gandul Jawa Pegon Pesantren Nusantara. Anda cerdas, menguasai tarkib nahwu-sharaf, rumus simbol pegon, dan gaya bahasa kitab kuning salaf. Jawab langsung dalam format JSON.";
+  const responseSchema = {
+    type: Type.OBJECT,
+    properties: {
+      kataAsal: {
+        type: Type.STRING,
+        description: "Kata atau kalimat asli yang dimasukkan"
+      },
+      bahasaAsal: {
+        type: Type.STRING,
+        description: "Klasifikasi: Jawa Pegon Pesantren, Bahasa Arab Turath, atau Istilah Fiqih"
+      },
+      terjemahan: {
+        type: Type.STRING,
+        description: "Terjemahan inti yang lugas dan tepat dalam Bahasa Indonesia"
+      },
+      padananArab: {
+        type: Type.STRING,
+        description: "Padanan kata Bahasa Arab berharakat jika ada"
+      },
+      tarkibPegon: {
+        type: Type.STRING,
+        description: "Kedudukan tarkib nahwu dan simbol rumus pegon pesantren"
+      },
+      contohPenggunaan: {
+        type: Type.STRING,
+        description: "Contoh kalimat penerapan dalam pembacaan kitab kuning gandul pesantren"
+      },
+      penjelasanMendalam: {
+        type: Type.STRING,
+        description: "Penjelasan mendalam mengenai kaidah bahasa dan rahasia maknanya; kosongkan untuk mode terjemahan langsung"
+      },
+      kategori: {
+        type: Type.STRING,
+        description: "Kategori: 'pegon', 'arab', atau 'istilah'"
+      }
+    },
+    required: ["kataAsal", "bahasaAsal", "terjemahan", "penjelasanMendalam"]
+  };
+  const generationRequest = {
       model: AI_MODEL,
       contents: prompt,
       config: {
-        systemInstruction: mode === "terjemah"
-          ? "Anda adalah penerjemah Arab dan Jawa Pegon ke Bahasa Indonesia. Untuk mode ini, berikan hanya terjemahan tanpa uraian kaidah. Jawab dalam format JSON."
-          : "Anda adalah Pakar Leksikografi Bahasa Arab Turath & Ahli Makna Gandul Jawa Pegon Pesantren Nusantara. Anda cerdas, menguasai tarkib nahwu-sharaf, rumus simbol pegon, dan gaya bahasa kitab kuning salaf. Jawab langsung dalam format JSON.",
+        systemInstruction,
         thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
         responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            kataAsal: {
-              type: Type.STRING,
-              description: "Kata atau kalimat asli yang dimasukkan"
-            },
-            bahasaAsal: {
-              type: Type.STRING,
-              description: "Klasifikasi: Jawa Pegon Pesantren, Bahasa Arab Turath, atau Istilah Fiqih"
-            },
-            terjemahan: {
-              type: Type.STRING,
-              description: "Terjemahan inti yang lugas dan tepat dalam Bahasa Indonesia"
-            },
-            padananArab: {
-              type: Type.STRING,
-              description: "Padanan kata Bahasa Arab berharakat jika ada"
-            },
-            tarkibPegon: {
-              type: Type.STRING,
-              description: "Kedudukan tarkib nahwu dan simbol rumus pegon pesantren"
-            },
-            contohPenggunaan: {
-              type: Type.STRING,
-              description: "Contoh kalimat penerapan dalam pembacaan kitab kuning gandul pesantren"
-            },
-            penjelasanMendalam: {
-              type: Type.STRING,
-              description: "Penjelasan mendalam mengenai kaidah bahasa dan rahasia maknanya; kosongkan untuk mode terjemahan langsung"
-            },
-            kategori: {
-              type: Type.STRING,
-              description: "Kategori: 'pegon', 'arab', atau 'istilah'"
-            }
-          },
-          required: ["kataAsal", "bahasaAsal", "terjemahan", "penjelasanMendalam"]
-        }
+        responseSchema
       }
+  };
+  const gemini = ai;
+
+  try {
+    const textOutput = await generateJsonWithProviderFallback({
+      systemInstruction,
+      responseSchema,
+      userContent: prompt,
+      generateGemini: gemini ? () => gemini.models.generateContent(generationRequest) : undefined
     });
-
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`Generation timeout exceeded ${AI_TIMEOUT_MS / 1000}s`)), AI_TIMEOUT_MS)
-    );
-
-    const response = (await Promise.race([generatePromise, timeoutPromise])) as any;
-
-    const textOutput = response.text;
-    if (!textOutput) {
-      throw new Error("Respon terjemahan kosong dari model.");
-    }
     const resultJson = JSON.parse(textOutput.trim());
     resultJson.mode = mode;
     if (mode === "terjemah") {
@@ -1863,11 +2007,11 @@ app.post("/api/chat-kitab", async (req, res) => {
     ? `Kitab: "${selectedKitab.title}" karya "${selectedKitab.author}". Kategori: "${selectedKitab.category}". Deskripsi: "${selectedKitab.description}". Detail Ringkasan: "${selectedKitab.summary}".`
     : `Kitab: "${kitabTitle}" (klasik Turath).`;
 
-  if (!ai) {
+  if (!ai && !openRouterApiKey) {
     if (images.length > 0) {
       return res.status(503).json({ error: "Analisis gambar belum tersedia karena layanan AI belum dikonfigurasi." });
     }
-    console.warn("Gemini API not configured. Returning static dialogue companion.");
+    console.warn("No AI provider configured. Returning static dialogue companion.");
     return res.json({
       role: "model",
       content: `Sebagai asisten Kitab ${kitabTitle || 'Turath'}, saya ingin mengabarkan bahwa saat ini integrasi layanan belum aktif sepenuhnya. Namun berdasarkan ringkasan, Kitab ${kitabTitle} mengajarkan kemuliaan nilai akhlak, kepatuhan ibadah, dan kedisiplinan ilmu. Tanyakan hal yang spesifik, dan saya akan berusaha memberi bantuan literasi klasiknya!`
@@ -1936,73 +2080,73 @@ app.post("/api/chat-kitab", async (req, res) => {
     ? `Tugas: jawab dengan penjelasan ringkas dalam content dan sertakan bait Alfiyah yang relevan pada dalil bila redaksinya dapat dipastikan. Jelaskan bait sebagai matan, bukan dalil syar'i. Cantumkan nomor bait bila diketahui; jangan gunakan nomor halaman sebagai pengganti nomor bait. ${kitabReferenceType} Jangan menulis salam atau pengantar panjang.`
     : `Tugas: jawab dengan penjelasan ringkas dalam content dan sertakan 1-3 ibarat Arab dari kitab terpilih yang relevan pada dalil bila redaksi dan sumbernya dapat dipastikan. Untuk kitab selain Alfiyah, berikan teks kitab/hadits/ayat yang memang menjadi bahan kitab, bukan dalil umum yang tidak terkait. ${kitabReferenceType} Jika nomor halaman diberikan, sertakan pula identitas cetakan/edisinya yang dapat diverifikasi. Jangan menulis salam atau pengantar panjang.`}`;
 
-  try {
-    const generatePromise = ai.models.generateContent({
-      model: AI_MODEL,
-      contents: images.length > 0
-        ? [{
-            role: "user",
-            parts: [
-              { text: prompt },
-              ...images.map(({ mimeType, data }) => ({ inlineData: { mimeType, data } }))
-            ]
-          }]
-        : prompt,
-      config: {
-        systemInstruction: isTaqriratAlfiyah
-          ? "Anda adalah pendamping kajian Alfiyah dan Taqrirat Alfiyah di Pesantren KHARISMA. Untuk setiap jawaban, sertakan bait matan Arab yang relevan bila redaksinya dapat dipastikan; jelaskan bait sebagai matan nahwu, bukan dalil syar'i. Bedakan matan dari uraian taqrirat, dan jangan mengarang teks atau nomor halaman. Jika bait tidak dapat diverifikasi, jelaskan keterbatasannya dan minta foto halaman. Jawab dalam format JSON sesuai schema."
-          : "Anda adalah asisten kajian Kitab Turath (Kitab Kuning) di Pesantren KHARISMA. Untuk setiap jawaban, sertakan ibarat Arab dari kitab terpilih yang relevan bila redaksinya dapat dipastikan. Jangan mengarang teks, kutipan, edisi, atau nomor halaman. Bedakan ibarat kitab dari dalil syar'i dan nyatakan keterbatasan sumber bila teks tidak tersedia. Jawab dalam format JSON sesuai schema.",
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-        responseMimeType: "application/json",
-        responseSchema: {
+  const systemInstruction = isTaqriratAlfiyah
+    ? "Anda adalah pendamping kajian Alfiyah dan Taqrirat Alfiyah di Pesantren KHARISMA. Untuk setiap jawaban, sertakan bait matan Arab yang relevan bila redaksinya dapat dipastikan; jelaskan bait sebagai matan nahwu, bukan dalil syar'i. Bedakan matan dari uraian taqrirat, dan jangan mengarang teks atau nomor halaman. Jika bait tidak dapat diverifikasi, jelaskan keterbatasannya dan minta foto halaman. Jawab dalam format JSON sesuai schema."
+    : "Anda adalah asisten kajian Kitab Turath (Kitab Kuning) di Pesantren KHARISMA. Untuk setiap jawaban, sertakan ibarat Arab dari kitab terpilih yang relevan bila redaksinya dapat dipastikan. Jangan mengarang teks, kutipan, edisi, atau nomor halaman. Bedakan ibarat kitab dari dalil syar'i dan nyatakan keterbatasan sumber bila teks tidak tersedia. Jawab dalam format JSON sesuai schema.";
+  const responseSchema = {
+    type: Type.OBJECT,
+    properties: {
+      content: {
+        type: Type.STRING,
+        description: "Jawaban bahasa Indonesia. Jika ada gambar, pisahkan teks soal terbaca, terjemahan teks Arab bila ada, dan penjelasan; nyatakan sumber/halaman yang belum terverifikasi."
+      },
+      dalil: {
+        type: Type.ARRAY,
+        description: isTaqriratAlfiyah
+          ? "Bait matan Alfiyah berbahasa Arab yang relevan, terjemahannya, dan rujukan. Bait ini adalah matan kaidah nahwu, bukan otomatis dalil syar'i. Cantumkan nomor bait hanya jika diketahui. Gunakan array kosong hanya jika teks tidak dapat dipastikan."
+          : `Ibarat/matan Arab langsung dari kitab yang dipilih, relevan dengan pertanyaan, beserta terjemahan dan rujukan. ${kitabReferenceType} Jika mencantumkan halaman, identifikasi cetakan/edisi. Gunakan array kosong hanya jika teks sumber tidak dapat dipastikan; jangan menggantinya dengan kutipan kitab lain.`,
+        items: {
           type: Type.OBJECT,
           properties: {
-            content: {
+            teksArab: {
               type: Type.STRING,
-              description: "Jawaban bahasa Indonesia. Jika ada gambar, pisahkan teks soal terbaca, terjemahan teks Arab bila ada, dan penjelasan; nyatakan sumber/halaman yang belum terverifikasi."
+              description: selectedKitab?.id === "tafsir-jalalain"
+                ? "Kutipan Arab berharakat; lafaz ayat Al-Qur'an harus tetap di luar kurung dan seluruh teks tafsir/penjelasan dalam tanda kurung biasa."
+                : "Kutipan teks Arab asli berharakat lengkap."
             },
-            dalil: {
-              type: Type.ARRAY,
-              description: isTaqriratAlfiyah
-                ? "Bait matan Alfiyah berbahasa Arab yang relevan, terjemahannya, dan rujukan. Bait ini adalah matan kaidah nahwu, bukan otomatis dalil syar'i. Cantumkan nomor bait hanya jika diketahui. Gunakan array kosong hanya jika teks tidak dapat dipastikan."
-                : `Ibarat/matan Arab langsung dari kitab yang dipilih, relevan dengan pertanyaan, beserta terjemahan dan rujukan. ${kitabReferenceType} Jika mencantumkan halaman, identifikasi cetakan/edisi. Gunakan array kosong hanya jika teks sumber tidak dapat dipastikan; jangan menggantinya dengan kutipan kitab lain.`,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  teksArab: {
-                    type: Type.STRING,
-                    description: selectedKitab?.id === "tafsir-jalalain"
-                      ? "Kutipan Arab berharakat; lafaz ayat Al-Qur'an harus tetap di luar kurung dan seluruh teks tafsir/penjelasan dalam tanda kurung biasa."
-                      : "Kutipan teks Arab asli berharakat lengkap."
-                  },
-                  terjemahan: {
-                    type: Type.STRING,
-                    description: "Terjemahan Indonesia dari kutipan Arab."
-                  },
-                  rujukan: {
-                    type: Type.STRING,
-                    description: `Nama kitab dan bab yang tepat; ${kitabReferenceType} Halaman wajib disertai identitas cetakan/edisi, dan nomor bait hanya bila dapat dipastikan.`
-                  }
-                },
-                required: ["teksArab", "terjemahan", "rujukan"]
-              }
+            terjemahan: {
+              type: Type.STRING,
+              description: "Terjemahan Indonesia dari kutipan Arab."
+            },
+            rujukan: {
+              type: Type.STRING,
+              description: `Nama kitab dan bab yang tepat; ${kitabReferenceType} Halaman wajib disertai identitas cetakan/edisi, dan nomor bait hanya bila dapat dipastikan.`
             }
           },
-          required: ["content", "dalil"]
+          required: ["teksArab", "terjemahan", "rujukan"]
         }
       }
-    });
-
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`Chat Kitab timeout exceeded ${AI_TIMEOUT_MS / 1000}s`)), AI_TIMEOUT_MS)
-    );
-
-    const response = (await Promise.race([generatePromise, timeoutPromise])) as any;
-
-    const textOutput = response.text;
-    if (!textOutput) {
-      throw new Error("Respon chat kitab kosong dari model.");
+    },
+    required: ["content", "dalil"]
+  };
+  const userContent: string | GeminiUserContent = images.length > 0
+    ? {
+        role: "user",
+        parts: [
+          { text: prompt },
+          ...images.map(({ mimeType, data }) => ({ inlineData: { mimeType, data } }))
+        ]
+      }
+    : prompt;
+  const generationRequest = {
+    model: AI_MODEL,
+    contents: userContent,
+    config: {
+      systemInstruction,
+      thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+      responseMimeType: "application/json",
+      responseSchema
     }
+  };
+  const gemini = ai;
+
+  try {
+    const textOutput = await generateJsonWithProviderFallback({
+      systemInstruction,
+      responseSchema,
+      userContent,
+      generateGemini: gemini ? () => gemini.models.generateContent(generationRequest) : undefined
+    });
     const parsed = JSON.parse(textOutput.trim());
     const dalil = Array.isArray(parsed.dalil) ? parsed.dalil : [];
     const content = typeof parsed.content === "string" ? parsed.content : "";
