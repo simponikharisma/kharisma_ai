@@ -7,6 +7,7 @@ import { createServer as createViteServer } from "vite";
 dotenv.config();
 
 const app = express();
+export default app;
 const PORT = Number(process.env.PORT) || 3003;
 const AI_MODEL = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
 const AI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS) || 90000;
@@ -1619,4 +1620,6 @@ async function startServer() {
   });
 }
 
-startServer();
+if (process.env.VERCEL !== "1") {
+  startServer();
+}
