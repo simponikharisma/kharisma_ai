@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { useAuthControls } from "./AuthGate";
 import {
   BookOpen,
   Search,
@@ -24,6 +25,7 @@ import {
   Copy,
   ArrowLeft,
   ChevronUp,
+  LogOut,
   Languages,
   ArrowRightLeft
 } from "lucide-react";
@@ -206,6 +208,7 @@ function getFormattedCalendarDates() {
 }
 
 export default function App() {
+  const authControls = useAuthControls();
   // Real-time automatic calendar state
   const [currentCalendar, setCurrentCalendar] = useState<{ hijri: string; masehi: string }>(getFormattedCalendarDates);
   const reloadOnControllerChangeRef = useRef(Boolean(navigator.serviceWorker?.controller));
@@ -792,17 +795,34 @@ export default function App() {
             </div>
           </div>
 
-          {/* Hijri & Gregorian Calendar Display (Real-time & Automatic) */}
-          <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-4 py-2 px-3 sm:px-4 rounded-xl bg-emerald-medium/70 border border-gold-heritage/25 text-xs text-stone-200 shadow-xs">
-            <div className="text-center sm:text-right">
-              <p className="font-semibold text-gold-bright font-sans text-xs sm:text-sm capitalize tracking-tight">
-                {currentCalendar.hijri}
-              </p>
-              <p className="opacity-85 font-mono text-[11px] sm:text-xs">
-                {currentCalendar.masehi}
-              </p>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {/* Hijri & Gregorian Calendar Display (Real-time & Automatic) */}
+            <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-4 py-2 px-3 sm:px-4 rounded-xl bg-emerald-medium/70 border border-gold-heritage/25 text-xs text-stone-200 shadow-xs">
+              <div className="text-center sm:text-right">
+                <p className="font-semibold text-gold-bright font-sans text-xs sm:text-sm capitalize tracking-tight">
+                  {currentCalendar.hijri}
+                </p>
+                <p className="opacity-85 font-mono text-[11px] sm:text-xs">
+                  {currentCalendar.masehi}
+                </p>
+              </div>
+              <span className="hidden sm:block h-6 sm:h-8 w-[1px] bg-gold-heritage/25"></span>
             </div>
-            <span className="hidden sm:block h-6 sm:h-8 w-[1px] bg-gold-heritage/25"></span>
+            {authControls && (
+              <div className="flex flex-col items-end gap-1">
+                <button
+                  type="button"
+                  onClick={authControls.logout}
+                  className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-gold-heritage/35 bg-emerald-medium px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-light"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Keluar
+                </button>
+                {authControls.logoutError && (
+                  <p className="text-xs text-amber-100" role="alert">{authControls.logoutError}</p>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </header>
