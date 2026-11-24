@@ -50,6 +50,33 @@ const MAX_KITAB_IMAGES_SIZE_BYTES = 2_400_000;
 const MAX_ORIGINAL_KITAB_IMAGE_SIZE_BYTES = 15_000_000;
 const AI_REQUEST_TIMEOUT_MS = 190_000;
 const SUPPORTED_KITAB_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const ARABIC_SCRIPT = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
+
+function splitSpeechText(text: string, maxLength = 750) {
+  const chunks: string[] = [];
+  let remaining = text.trim();
+
+  while (remaining.length > maxLength) {
+    const windowText = remaining.slice(0, maxLength + 1);
+    const sentenceBreaks = Array.from(windowText.matchAll(/[.!?؟۔]\s*/gu))
+      .filter((match) => !/\d/.test(windowText[(match.index || 0) - 1] || ""));
+    let splitIndex = sentenceBreaks.at(-1)?.index;
+    if (splitIndex !== undefined) {
+      splitIndex += sentenceBreaks[sentenceBreaks.length - 1][0].length;
+    }
+
+    if (!splitIndex || splitIndex < maxLength * 0.55) {
+      const whitespaceIndex = windowText.lastIndexOf(" ", maxLength);
+      splitIndex = whitespaceIndex > 0 ? whitespaceIndex : maxLength;
+    }
+
+    chunks.push(remaining.slice(0, splitIndex).trim());
+    remaining = remaining.slice(splitIndex).trimStart();
+  }
+
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
 
 async function prepareKitabImage(file: File): Promise<File> {
   if (!SUPPORTED_KITAB_IMAGE_TYPES.has(file.type)) {
@@ -98,6 +125,32 @@ async function prepareKitabImage(file: File): Promise<File> {
 
     const baseName = file.name.replace(/\.[^.]+$/, "") || "soal";
     return new File([optimized], `${baseName}.jpg`, { type: "image/jpeg", lastModified: file.lastModified });
+  } finally {
+    bitmap.close();
+  }
+}
+
+async function enhanceKitabImageForOcr(file: File): Promise<Blob> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const maxDimension = 3000;
+    const scale = Math.min(2.5, maxDimension / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Browser tidak dapat meningkatkan kejelasan gambar.");
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.filter = "grayscale(1) contrast(1.35)";
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const enhanced = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error("Gambar hasil peningkatan tidak dapat dibuat."));
+      }, "image/png");
+    });
+    return enhanced;
   } finally {
     bitmap.close();
   }
@@ -214,7 +267,186 @@ interface ChatMessage {
   role: "user" | "model";
   content: string;
   attachments?: string[];
-  dalil?: { teksArab: string; terjemahan: string; rujukan: string }[];
+  imageAnswer?: boolean;
+  sourceOcrText?: string;
+  dalil?: {
+    teksArab: string;
+    terjemahan: string;
+    rujukan: string;
+    nomorSoal?: string;
+    rujukDalilNomorSoal?: string;
+  }[];
+}
+
+function getImageAnswerParts(text: string) {
+  const cleanedText = cleanOrphanSymbols(text);
+  const markerPattern = /((?:^|[\r\n]|[؟?]|\()\s*)([0-9٠-٩۰-۹]+)(?:\)|[.)\-:\u2010-\u2015\u2212]|(?=\r?\n)|(?=\s*[\p{L}]))\s*/gmu;
+  const markers = Array.from(cleanedText.matchAll(markerPattern));
+  const questionParts = markers.map((marker, index) => {
+    const start = (marker.index || 0) + marker[0].length;
+    const nextMarker = markers[index + 1];
+    const nextMarkerPrefix = nextMarker?.[1] || "";
+    const end = nextMarker
+      ? (nextMarker.index || 0) + (nextMarkerPrefix.startsWith("(") ? 0 : nextMarkerPrefix.length)
+      : cleanedText.length;
+    return { number: marker[2], text: cleanedText.slice(start, end).trim() };
+  });
+  const intro = markers.length ? cleanedText.slice(0, markers[0].index || 0).trim() : "";
+  const sections = questionParts.length
+    ? questionParts
+    : [{ number: "", text: cleanedText }];
+  const labelPattern = /(^|\s)(Teks(?:\s+soal)?(?:\s+Arab)?(?:\s+terbaca)?|Terjemah(?:an)?|Jawaban|Penjelasan|Ibarat(?:\s*\/\s*Dalil)?|Dalil|النص(?:\s+المقروء)?|الترجمة|الجواب|الإجابة|الشرح|العبارة)(?=[:：]|\s|[A-Z(]|$)\s*[:：]?\s*/giu;
+
+  return {
+    intro,
+    sections: sections.map((section) => {
+      const labels = Array.from(section.text.matchAll(labelPattern));
+      const parts: { label: string; text: string }[] = [];
+      if (labels.length === 0) {
+        parts.push({ label: "", text: section.text });
+      } else {
+        if ((labels[0].index || 0) > 0) {
+          parts.push({ label: "", text: section.text.slice(0, (labels[0].index || 0) + labels[0][1].length).trim() });
+        }
+        labels.forEach((label, index) => {
+          const start = (label.index || 0) + label[0].length;
+          const end = labels[index + 1]?.index ?? section.text.length;
+          parts.push({ label: label[2], text: section.text.slice(start, end).trim() });
+        });
+      }
+
+      const formattedParts = parts.flatMap((part) => {
+        const isQuestionText = /^(?:Teks(?: soal)?(?: Arab)?(?: terbaca)?|النص(?: المقروء)?)$/iu.test(part.label);
+        if (part.label && !isQuestionText) return [part];
+        const inlineTranslation = part.text.match(/^([\s\S]*?[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF][\s\S]*?)\s*[\(（]([^()（）]+)[\)）]\s*[.؟!?]*$/u);
+        if (!inlineTranslation || !ARABIC_SCRIPT.test(inlineTranslation[1]) || ARABIC_SCRIPT.test(inlineTranslation[2]) || !/[A-Za-z]/u.test(inlineTranslation[2])) {
+          return [part];
+        }
+        return [
+          { label: part.label, text: inlineTranslation[1].trim() },
+          { label: "Terjemahan", text: inlineTranslation[2].trim() }
+        ];
+      });
+
+      const hasInlineTranslation = formattedParts.some((part) => /^Terjemah(?:an)?$/iu.test(part.label));
+      const visibleParts = (hasInlineTranslation
+        ? formattedParts.filter((part) => !(/^Terjemah(?:an)?$/iu.test(part.label) && /^(?:tidak diperlukan|tidak ada)\.?$/iu.test(part.text)))
+        : formattedParts)
+        .map((part) => ({
+          label: normalizeImageAnswerLabel(part.label, part.text),
+          text: part.text
+        }))
+        .filter((part) => Boolean(part.label))
+        .sort((left, right) => imageAnswerLabelOrder(left.label) - imageAnswerLabelOrder(right.label));
+      const mergedParts = visibleParts.reduce<{ label: string; text: string }[]>((result, part) => {
+        if (part.label === "Penjelasan") {
+          const existingExplanation = result.find((item) => item.label === "Penjelasan");
+          if (existingExplanation) {
+            existingExplanation.text = [existingExplanation.text, part.text].filter(Boolean).join("\n\n");
+          } else {
+            result.push(part);
+          }
+        } else {
+          result.push(part);
+        }
+        return result;
+      }, []);
+      return { ...section, parts: mergedParts };
+    })
+  };
+}
+
+function getOcrQuestionText(ocrText: string | undefined, questionNumber: string) {
+  if (!ocrText?.trim()) return "";
+  const cleanedText = cleanOrphanSymbols(ocrText.replace(/\[OCR gambar \d+\]/giu, ""));
+  const markerPattern = /((?:^|[\r\n]|[؟?]|\()\s*)([0-9٠-٩۰-۹]+)(?:\)|[.)\-:\u2010-\u2015\u2212]|(?=\r?\n)|(?=\s*[\p{L}]))\s*/gmu;
+  const markers = Array.from(cleanedText.matchAll(markerPattern));
+  const normalizedNumber = normalizeQuestionNumber(questionNumber);
+  const markerIndex = markers.findIndex((marker) => normalizeQuestionNumber(marker[2]) === normalizedNumber);
+  if (markerIndex < 0) return "";
+  const marker = markers[markerIndex];
+  const start = (marker.index || 0) + marker[0].length;
+  const nextMarker = markers[markerIndex + 1];
+  const nextPrefix = nextMarker?.[1] || "";
+  const end = nextMarker
+    ? (nextMarker.index || 0) + (nextPrefix.startsWith("(") ? 0 : nextPrefix.length)
+    : cleanedText.length;
+  const questionText = cleanedText.slice(start, end).trim();
+  return ARABIC_SCRIPT.test(questionText) ? questionText : "";
+}
+
+function normalizeImageAnswerLabel(label: string, text: string) {
+  if (/^(?:Teks(?: soal)?(?: Arab)?(?: terbaca)?|النص(?: المقروء)?)$/iu.test(label)) {
+    return isArabicFirst(text) ? "Teks Arab" : "Soal";
+  }
+  if (/^(?:Terjemah(?:an)?|الترجمة)$/iu.test(label)) return "Terjemah";
+  if (/^(?:Jawaban|الجواب|الإجابة)$/iu.test(label)) return "Penjelasan";
+  if (/^(?:Penjelasan|الشرح)$/iu.test(label)) return "Penjelasan";
+  if (/^(?:Ibarat(?:\s*\/\s*Dalil)?|Dalil|العبارة)$/iu.test(label)) return "";
+  if (!label) return isArabicFirst(text) ? "Teks Arab" : "Jawaban";
+  return label;
+}
+
+function imageAnswerLabelOrder(label: string) {
+  const order: Record<string, number> = {
+    "Teks Arab": 0,
+    Soal: 0,
+    Terjemah: 1,
+    Jawaban: 2,
+    Penjelasan: 3
+  };
+  return order[label] ?? 4;
+}
+
+function cleanOrphanSymbols(text: string) {
+  return text
+    .replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu, "")
+    .replace(/[©®™]/gu, "")
+    .replace(/(^|\s)[.·•]+(?=[\p{L}0-9٠-٩۰-۹]|\s|$)/gu, "$1")
+    .replace(/[ \t]{2,}/gu, " ")
+    .trim();
+}
+
+function normalizeQuestionNumber(number: string) {
+  const arabicDigits = "٠١٢٣٤٥٦٧٨٩";
+  const persianDigits = "۰۱۲۳۴۵۶۷۸۹";
+  const digits = number.match(/[0-9٠-٩۰-۹]/gu) || [];
+  return digits.map((digit) => {
+    if (/[0-9]/u.test(digit)) return digit;
+    const arabicIndex = arabicDigits.indexOf(digit);
+    return String(arabicIndex >= 0 ? arabicIndex : persianDigits.indexOf(digit));
+  }).join("");
+}
+
+function getDalilForImageQuestion(
+  dalil: ChatMessage["dalil"],
+  questionNumber: string,
+  questionIndex: number
+) {
+  if (!dalil?.length) return [];
+  const normalizedNumber = normalizeQuestionNumber(questionNumber);
+  const matchingDalil = dalil.filter((item) =>
+    item.nomorSoal && normalizeQuestionNumber(item.nomorSoal) === normalizedNumber
+  );
+  if (matchingDalil.length > 0) return matchingDalil;
+  if (dalil.every((item) => !item.nomorSoal)) {
+    return dalil[questionIndex] ? [dalil[questionIndex]] : [];
+  }
+  return [];
+}
+
+function isArabicFirst(text: string) {
+  const firstArabic = text.search(ARABIC_SCRIPT);
+  const firstLatin = text.search(/[A-Za-z0-9]/);
+  return firstArabic >= 0 && (firstLatin < 0 || firstArabic < firstLatin);
+}
+
+async function readJsonResponse<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    const failure = await response.json().catch(() => ({}));
+    throw new Error(typeof failure.error === "string" ? failure.error : `Permintaan gagal (HTTP ${response.status}).`);
+  }
+  return response.json() as Promise<T>;
 }
 
 interface KamusEntryData {
@@ -309,6 +541,9 @@ export default function App() {
   const [isVoiceLoading, setIsVoiceLoading] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+  const voicePlaybackIdRef = useRef(0);
+  const voiceAbortControllerRef = useRef<AbortController | null>(null);
+  const voicePlaybackCancelRef = useRef<(() => void) | null>(null);
 
   // Tab 2: Maktabah Library Catalog
   const [books, setBooks] = useState<any[]>([]);
@@ -323,12 +558,17 @@ export default function App() {
   const [isSendingToKitab, setIsSendingToKitab] = useState(false);
   const [showChatArea, setShowChatArea] = useState(false);
   const [kitabImageAttachments, setKitabImageAttachments] = useState<File[]>([]);
+  const [kitabImageOcrTexts, setKitabImageOcrTexts] = useState<string[]>([]);
+  const [kitabOcrProgress, setKitabOcrProgress] = useState("");
+  const [kitabOcrNotice, setKitabOcrNotice] = useState("");
   const [kitabImagePreviews, setKitabImagePreviews] = useState<{ name: string; url: string }[]>([]);
   const [isPreparingKitabImages, setIsPreparingKitabImages] = useState(false);
   const [kitabChatError, setKitabChatError] = useState<string | null>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
+  const appViewRef = useRef({ activeTab, showChatArea, selectedKitabId });
+  appViewRef.current = { activeTab, showChatArea, selectedKitabId };
 
   // Tab 3: Glossary & Translator (Pegon & Arab Turath)
   const [kamus, setKamus] = useState<Record<string, KamusEntryData>>({});
@@ -428,17 +668,72 @@ export default function App() {
 
   // Use generated speech only; browser speech synthesis sounds robotic and cannot reliably read Arabic.
   const stopVoice = () => {
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause();
-      currentAudioRef.current.currentTime = 0;
-      currentAudioRef.current = null;
-    }
+    voicePlaybackIdRef.current += 1;
+    voiceAbortControllerRef.current?.abort();
+    voiceAbortControllerRef.current = null;
+    const audio = currentAudioRef.current;
+    currentAudioRef.current = null;
+    audio?.pause();
+    if (audio) audio.currentTime = 0;
+    const cancelPlayback = voicePlaybackCancelRef.current;
+    voicePlaybackCancelRef.current = null;
+    cancelPlayback?.();
     setIsSpeechPlaying(false);
     setPlayingVoiceId(null);
     setIsVoiceLoading(false);
   };
 
   const stopTTS = () => stopVoice();
+
+  useEffect(() => {
+    const makeViewState = () => ({
+      kharismaApp: true,
+      activeTab: appViewRef.current.activeTab,
+      showChatArea: appViewRef.current.showChatArea,
+      selectedKitabId: appViewRef.current.selectedKitabId
+    });
+    const initialState = makeViewState();
+    if (!window.history.state?.kharismaApp) {
+      window.history.pushState(initialState, "", window.location.href);
+    }
+
+    const handlePopState = (event: PopStateEvent) => {
+      if (!event.state?.kharismaApp) return;
+      stopVoice();
+      switch (event.state.activeTab) {
+        case "maktabah":
+        case "kamus":
+        case "bookmarks":
+        case "bahtsul-masail":
+          setActiveTab(event.state.activeTab);
+          break;
+        default:
+          setActiveTab("bahtsul-masail");
+      }
+      setShowChatArea(Boolean(event.state.showChatArea));
+      setSelectedKitabId(typeof event.state.selectedKitabId === "string" ? event.state.selectedKitabId : null);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
+    const currentState = window.history.state;
+    const view = appViewRef.current;
+    if (
+      currentState?.kharismaApp &&
+      currentState.activeTab === view.activeTab &&
+      currentState.showChatArea === view.showChatArea &&
+      currentState.selectedKitabId === view.selectedKitabId
+    ) return;
+    window.history.pushState({
+      kharismaApp: true,
+      activeTab: view.activeTab,
+      showChatArea: view.showChatArea,
+      selectedKitabId: view.selectedKitabId
+    }, "", window.location.href);
+  }, [activeTab, showChatArea, selectedKitabId]);
 
   const playHumanVoice = async (textToSpeak: string, voiceId: string = "default") => {
     // If clicking same active voice that is playing or loading, toggle stop
@@ -448,6 +743,7 @@ export default function App() {
     }
 
     stopVoice();
+    const playbackId = voicePlaybackIdRef.current;
     setVoiceError(null);
     setPlayingVoiceId(voiceId);
     setIsVoiceLoading(true);
@@ -464,52 +760,70 @@ export default function App() {
       return;
     }
 
+    const chunks = splitSpeechText(cleanedText);
     try {
-      const res = await fetch("/api/voice/speak", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: cleanedText })
-      });
+      for (const chunk of chunks) {
+        if (playbackId !== voicePlaybackIdRef.current) return;
+        setIsVoiceLoading(true);
+        const controller = new AbortController();
+        voiceAbortControllerRef.current = controller;
+        const res = await fetch("/api/voice/speak", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({ text: chunk })
+        });
+        if (voiceAbortControllerRef.current === controller) voiceAbortControllerRef.current = null;
+        if (playbackId !== voicePlaybackIdRef.current) return;
 
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || "Suara manusia belum berhasil dibuat.");
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "Suara manusia belum berhasil dibuat.");
+        if (!data.audioData) throw new Error("Audio suara manusia tidak tersedia.");
+
+        const audio = new Audio(data.audioData);
+        currentAudioRef.current = audio;
+        await new Promise<void>((resolve, reject) => {
+          let settled = false;
+          let cancelPlayback = () => {};
+          const finish = (error?: Error) => {
+            if (settled) return;
+            settled = true;
+            if (voicePlaybackCancelRef.current === cancelPlayback) voicePlaybackCancelRef.current = null;
+            if (currentAudioRef.current === audio) currentAudioRef.current = null;
+            if (error) reject(error);
+            else resolve();
+          };
+
+          cancelPlayback = () => finish();
+          voicePlaybackCancelRef.current = cancelPlayback;
+          audio.onplay = () => {
+            setIsSpeechPlaying(true);
+            setIsVoiceLoading(false);
+          };
+          audio.onended = () => {
+            setIsSpeechPlaying(false);
+            finish();
+          };
+          audio.onerror = () => finish(new Error("Audio suara manusia tidak dapat diputar. Silakan coba lagi."));
+          void audio.play().catch((error) => {
+            finish(error instanceof Error ? error : new Error("Audio suara manusia tidak dapat diputar."));
+          });
+        });
+        if (playbackId !== voicePlaybackIdRef.current) return;
       }
-      if (!data.audioData) {
-        throw new Error("Audio suara manusia tidak tersedia.");
-      }
 
-      const audio = new Audio(data.audioData);
-      currentAudioRef.current = audio;
-
-      audio.onplay = () => {
-        setIsSpeechPlaying(true);
-        setIsVoiceLoading(false);
-      };
-
-      audio.onended = () => {
-        setIsSpeechPlaying(false);
-        setPlayingVoiceId(null);
-        currentAudioRef.current = null;
-      };
-
-      audio.onerror = () => {
-        console.warn("Generated audio could not be played.");
-        setVoiceError("Audio suara manusia tidak dapat diputar. Silakan coba lagi.");
-        setIsSpeechPlaying(false);
-        setIsVoiceLoading(false);
-        setPlayingVoiceId(null);
-        currentAudioRef.current = null;
-      };
-
-      await audio.play();
+      setIsSpeechPlaying(false);
+      setIsVoiceLoading(false);
+      setPlayingVoiceId(null);
     } catch (err) {
+      if (playbackId !== voicePlaybackIdRef.current) return;
       console.warn("Generated human voice unavailable:", err);
       setVoiceError(err instanceof Error ? err.message : "Suara manusia belum berhasil dibuat. Silakan coba lagi.");
       setIsSpeechPlaying(false);
       setIsVoiceLoading(false);
       setPlayingVoiceId(null);
       currentAudioRef.current = null;
+      voiceAbortControllerRef.current = null;
     }
   };
 
@@ -612,7 +926,7 @@ export default function App() {
         })
       });
       clearTimeout(timeoutId);
-      const data = await res.json();
+      const data = await readJsonResponse<BahtsulMasailResult>(res);
       setBmResult(data);
 
       // Smooth scroll down to completed ruling document on mobile
@@ -655,6 +969,7 @@ export default function App() {
     }
 
     setIsPreparingKitabImages(true);
+    setKitabOcrNotice("");
     try {
       const preparedFiles: File[] = [];
       for (const file of selectedFiles) {
@@ -666,10 +981,54 @@ export default function App() {
         throw new Error("Total ukuran gambar maksimal 2,4 MB setelah diproses.");
       }
 
+      const recognizedTexts: string[] = [];
+      let ocrHadError = false;
+      try {
+        const { createWorker } = await import("tesseract.js");
+        const worker = await createWorker(["ara", "ind"], 1, {
+          langPath: "https://tessdata.projectnaptha.com/4.0.0",
+          logger: (progress) => {
+            if (progress.status === "recognizing text") {
+              setKitabOcrProgress(`Membaca teks gambar secara lokal (${Math.round((progress.progress || 0) * 100)}%)...`);
+            } else if (progress.status === "loading language traineddata") {
+              setKitabOcrProgress("Memuat model OCR Arab dan Indonesia gratis...");
+            }
+          }
+        });
+        try {
+          for (const [index, file] of preparedFiles.entries()) {
+            setKitabOcrProgress(`Meningkatkan kejelasan dan membaca gambar ${index + 1}/${preparedFiles.length}...`);
+            try {
+              const enhancedImage = await enhanceKitabImageForOcr(file);
+              const result = await worker.recognize(enhancedImage);
+              recognizedTexts.push(cleanOrphanSymbols(result.data.text));
+            } catch (error) {
+              console.warn(`OCR lokal gagal untuk ${file.name}:`, error);
+              ocrHadError = true;
+              recognizedTexts.push("");
+            }
+          }
+        } finally {
+          await worker.terminate();
+        }
+        if (ocrHadError) {
+          setKitabOcrNotice("Sebagian teks tidak terbaca OCR. Periksa hasilnya; gambar asli tetap dikirim agar AI dapat membantu.");
+        } else if (!recognizedTexts.some(Boolean)) {
+          setKitabOcrNotice("Teks belum terbaca oleh OCR lokal. Gambar asli tetap akan dikirim agar AI mencoba membacanya.");
+        }
+      } catch (error) {
+        console.warn("OCR lokal Arab/Indonesia tidak tersedia:", error);
+        recognizedTexts.push(...Array.from({ length: preparedFiles.length - recognizedTexts.length }, () => ""));
+        setKitabOcrNotice("OCR gratis tidak dapat dimuat. Gambar asli tetap bisa dibaca oleh AI.");
+      }
+
       setKitabImageAttachments((current) => [...current, ...preparedFiles]);
+      setKitabImageOcrTexts((current) => [...current, ...recognizedTexts]);
+      setKitabInput((current) => current.trim() ? current : "Mohon baca dan kaji semua soal pada gambar terlampir. Susun jawaban per soal, terjemahkan teks Arab bila perlu, dan sertakan dalil Arab yang relevan untuk setiap soal.");
     } catch (error) {
       setKitabChatError(error instanceof Error ? error.message : "Gambar tidak dapat diproses.");
     } finally {
+      setKitabOcrProgress("");
       setIsPreparingKitabImages(false);
     }
   };
@@ -682,10 +1041,15 @@ export default function App() {
     const currentKitab = books.find(b => b.id === selectedKitabId);
     if (!currentKitab) return;
 
+    const sourceOcrText = kitabImageOcrTexts
+      .map((text, index) => text.trim() ? `[OCR gambar ${index + 1}]\n${text.trim()}` : "")
+      .filter(Boolean)
+      .join("\n\n");
     const userMessage: ChatMessage = {
       role: "user",
-      content: userPrompt || "Mohon baca dan kaji soal pada gambar terlampir.",
-      attachments: kitabImageAttachments.map((file) => file.name)
+      content: userPrompt || "Mohon baca dan kaji semua soal pada gambar terlampir. Susun jawaban per soal, terjemahkan teks Arab bila perlu, dan sertakan dalil Arab yang relevan untuk setiap soal.",
+      attachments: kitabImageAttachments.map((file) => file.name),
+      sourceOcrText
     };
     const previousMessages = kitabMessages;
     const updatedMessages = [...previousMessages, userMessage];
@@ -709,13 +1073,11 @@ export default function App() {
           kitabId: selectedKitabId,
           kitabTitle: currentKitab.title,
           messages: updatedMessages.map(({ role, content }) => ({ role, content })),
-          images
+          images,
+          ocrText: sourceOcrText
         })
       });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) {
-        throw new Error(typeof data?.error === "string" ? data.error : `Permintaan kajian gagal (HTTP ${res.status}).`);
-      }
+      const data = await readJsonResponse<{ role: string; content: string; dalil?: ChatMessage["dalil"] }>(res);
       if (!data || data.role !== "model" || typeof data.content !== "string") {
         throw new Error("Respons kajian tidak lengkap. Silakan coba lagi.");
       }
@@ -723,10 +1085,14 @@ export default function App() {
       setKitabMessages([...updatedMessages, {
         role: "model",
         content: data.content,
-        dalil: Array.isArray(data.dalil) ? data.dalil : []
+        dalil: Array.isArray(data.dalil) ? data.dalil : [],
+        imageAnswer: images.length > 0,
+        sourceOcrText
       }]);
       setKitabInput("");
       setKitabImageAttachments([]);
+      setKitabImageOcrTexts([]);
+      setKitabOcrNotice("");
     } catch (error) {
       setKitabMessages(previousMessages);
       setKitabChatError(
@@ -749,6 +1115,8 @@ export default function App() {
     // Reset and initialize chat session
     setKitabInput("");
     setKitabImageAttachments([]);
+    setKitabImageOcrTexts([]);
+    setKitabOcrNotice("");
     setKitabChatError(null);
     setKitabMessages([
       {
@@ -797,7 +1165,6 @@ export default function App() {
 
     setIsExplainingTerm(true);
     setKamusResponse(null);
-
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT_MS);
     try {
@@ -810,7 +1177,7 @@ export default function App() {
           mode: activeMode
         })
       });
-      const data: KamusTranslateResult = await res.json();
+      const data = await readJsonResponse<KamusTranslateResult>(res);
       setKamusResponse({ ...data, mode: activeMode });
       if (termToExplain) {
         setCustomTerm(termToExplain);
@@ -888,6 +1255,31 @@ export default function App() {
       selectedKitab.tags?.some((tag: string) => ["nazam", "nadhom", "syair", "alfiyah"].includes(tag.toLowerCase()))
     )
   );
+  const renderDalilCards = (items: NonNullable<ChatMessage["dalil"]>, keyPrefix: string) => items.map((d, di) => (
+    <React.Fragment key={`${keyPrefix}-${di}`}>
+      {d.rujukDalilNomorSoal ? (
+        <p className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-600">
+          Dalil Arab sama dengan nomor {d.rujukDalilNomorSoal}.
+        </p>
+      ) : (
+        <div className={`bg-amber-50/70 border border-gold-heritage/30 rounded-xl p-3 ${selectedKitabIsNazam ? "ring-1 ring-gold-heritage/10" : ""}`}>
+          <p className="text-arabic text-[18px] sm:text-[20px] text-emerald-deep" dir="rtl" lang="ar">{d.teksArab}</p>
+          <p className="text-[11px] sm:text-xs text-stone-600 italic mt-2">{d.terjemahan}</p>
+          <p className="text-[10px] font-mono text-stone-500 mt-1">— {d.rujukan}</p>
+        </div>
+      )}
+      {selectedKitabIsNazam && di < items.length - 1 && (
+        <div className="flex items-center gap-2 px-2 py-0.5" role="separator" aria-label="Pemisah antar bait nadham">
+          <span className="h-px flex-1 bg-gradient-to-r from-transparent via-gold-heritage/60 to-stone-300" />
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-gold-heritage/30 bg-white px-2.5 py-1 text-[9px] font-semibold tracking-wide text-emerald-800 shadow-sm">
+            <Sparkles className="h-3 w-3 text-gold-heritage" aria-hidden="true" />
+            Bait berikutnya
+          </span>
+          <span className="h-px flex-1 bg-gradient-to-l from-transparent via-gold-heritage/60 to-stone-300" />
+        </div>
+      )}
+    </React.Fragment>
+  ));
   const filteredBooks = books.filter(b => {
     if (bookCategoryFilter !== "semua") {
       const matchCat =
@@ -1794,34 +2186,84 @@ export default function App() {
                                   ? "bg-emerald-deep text-white rounded-tr-none shadow-sm"
                                   : "bg-white border border-stone-200/90 text-gray-800 rounded-tl-none shadow-sm"
                               }`}>
-                                {Boolean(msg.content?.trim()) && <p className="whitespace-pre-wrap">{msg.content}</p>}
+                                {Boolean(msg.content?.trim()) && msg.role === "model" && msg.imageAnswer ? (
+                                  (() => {
+                                    const formatted = getImageAnswerParts(msg.content);
+                                    return (
+                                      <div className="space-y-3">
+                                        {formatted.sections.map((section, sectionIndex) => {
+                                          const sectionDalil = section.number
+                                            ? getDalilForImageQuestion(msg.dalil, section.number, sectionIndex)
+                                            : [];
+                                          const ocrQuestionText = section.number
+                                            ? getOcrQuestionText(msg.sourceOcrText, section.number)
+                                            : "";
+                                          const displayParts = ocrQuestionText
+                                            ? [
+                                                { label: "Teks Arab", text: ocrQuestionText },
+                                                ...section.parts.filter((part) => !/^(?:Teks Arab|Soal)$/iu.test(part.label))
+                                              ]
+                                            : section.parts;
+                                          return (
+                                          <React.Fragment key={`${i}-${sectionIndex}`}>
+                                            <section className="space-y-2.5">
+                                              {section.number && (
+                                                <h4 dir="ltr" className="text-left font-bold text-sm text-emerald-900">{normalizeQuestionNumber(section.number)}</h4>
+                                              )}
+                                              {displayParts.map((part, partIndex) => (
+                                                <div
+                                                  key={partIndex}
+                                                  className={`${partIndex > 0 ? "border-t border-stone-200 pt-2" : ""} whitespace-pre-wrap text-sm`}
+                                                >
+                                                  {part.label && !/^(?:Teks soal terbaca|Teks Arab)$/iu.test(part.label) && (
+                                                    <span
+                                                      dir={isArabicFirst(part.label) ? "rtl" : "ltr"}
+                                                      className={`mb-0.5 block font-semibold text-stone-700 ${isArabicFirst(part.label) ? "text-right" : "text-left"}`}
+                                                    >
+                                                      {part.label}
+                                                    </span>
+                                                  )}
+                                                  <span
+                                                    dir={isArabicFirst(part.text) ? "rtl" : "ltr"}
+                                                    lang={isArabicFirst(part.text) ? "ar" : undefined}
+                                                    className={`block ${isArabicFirst(part.text) ? "text-arabic text-right" : "text-left"}`}
+                                                  >
+                                                    {part.text}
+                                                  </span>
+                                                </div>
+                                              ))}
+                                              {section.number && (
+                                                <div className="border-t border-stone-200 pt-2">
+                                                  <h5 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-emerald-800">Dalil</h5>
+                                                  {sectionDalil.length > 0 ? renderDalilCards(sectionDalil, `${i}-${sectionIndex}`) : (
+                                                    <p className="text-xs text-stone-600">Dalil khusus untuk soal ini belum dapat dipastikan.</p>
+                                                  )}
+                                                </div>
+                                              )}
+                                            </section>
+                                            {sectionIndex < formatted.sections.length - 1 && (
+                                              <hr className="border-stone-300" aria-label="Pemisah antar soal" />
+                                            )}
+                                          </React.Fragment>
+                                          );
+                                        })}
+                                      </div>
+                                    );
+                                  })()
+                                ) : (
+                                  Boolean(msg.content?.trim()) && <p className="whitespace-pre-wrap">{msg.content}</p>
+                                )}
                                 {msg.role === "user" && msg.attachments && msg.attachments.length > 0 && (
                                   <p className="mt-2 text-xs text-white/75">Gambar terlampir: {msg.attachments.join(", ")}</p>
                                 )}
-                                {msg.role === "model" && msg.dalil !== undefined && (
-                                  <div className="mt-3 space-y-2">
+                                {msg.role === "model" && msg.dalil !== undefined && !(
+                                  msg.imageAnswer && getImageAnswerParts(msg.content).sections.some((section) => Boolean(section.number))
+                                ) && (
+                                  <div className={`mt-3 space-y-2 ${msg.imageAnswer ? "border-t border-stone-200 pt-3" : ""}`}>
                                     <h4 className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
                                       {selectedKitabIsNazam ? "Matan Nadham — bait terpisah" : "Ibarat / Matan Arab dari Kitab"}
                                     </h4>
-                                    {msg.dalil && msg.dalil.length > 0 ? msg.dalil.map((d, di) => (
-                                      <React.Fragment key={di}>
-                                        <div className={`bg-amber-50/70 border border-gold-heritage/30 rounded-xl p-3 ${selectedKitabIsNazam ? "ring-1 ring-gold-heritage/10" : ""}`}>
-                                          <p className="text-arabic text-[18px] sm:text-[20px] text-emerald-deep" dir="rtl" lang="ar">{d.teksArab}</p>
-                                          <p className="text-[11px] sm:text-xs text-stone-600 italic mt-2">{d.terjemahan}</p>
-                                          <p className="text-[10px] font-mono text-stone-500 mt-1">— {d.rujukan}</p>
-                                        </div>
-                                        {selectedKitabIsNazam && di < msg.dalil.length - 1 && (
-                                          <div className="flex items-center gap-2 px-2 py-0.5" role="separator" aria-label="Pemisah antar bait nadham">
-                                            <span className="h-px flex-1 bg-gradient-to-r from-transparent via-gold-heritage/60 to-stone-300" />
-                                            <span className="inline-flex items-center gap-1.5 rounded-full border border-gold-heritage/30 bg-white px-2.5 py-1 text-[9px] font-semibold tracking-wide text-emerald-800 shadow-sm">
-                                              <Sparkles className="h-3 w-3 text-gold-heritage" aria-hidden="true" />
-                                              Bait berikutnya
-                                            </span>
-                                            <span className="h-px flex-1 bg-gradient-to-l from-transparent via-gold-heritage/60 to-stone-300" />
-                                          </div>
-                                        )}
-                                      </React.Fragment>
-                                    )) : (
+                                    {msg.dalil && msg.dalil.length > 0 ? renderDalilCards(msg.dalil, `message-${i}`) : (
                                       <p className="text-xs text-stone-600 bg-stone-50 border border-stone-200 rounded-xl p-3">
                                         Ibarat Arab belum dapat diverifikasi dari sumber yang tersedia. Agar tidak mengarang, kirim foto halaman atau teks kitab yang dimaksud.
                                       </p>
@@ -1864,9 +2306,11 @@ export default function App() {
                           
                           {isSendingToKitab && (
                             <div className="self-start flex gap-2 max-w-[80%]">
-                              <div className="p-3 bg-white border border-stone-200 rounded-2xl rounded-tl-none text-xs sm:text-sm flex items-center gap-2 shadow-xs">
-                                <Loader2 className="w-4 h-4 animate-spin text-emerald-deep" />
-                                <span className="italic text-stone-600 font-sans">KHARISMA sedang menelaah hasyiyah kitab...</span>
+                              <div className="p-3 bg-white border border-stone-200 rounded-2xl rounded-tl-none text-xs sm:text-sm flex items-start gap-2 shadow-xs" aria-live="polite">
+                                <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-emerald-deep" />
+                                <div className="min-w-0">
+                                  <span className="italic text-stone-600 font-sans">KHARISMA sedang menelaah hasyiyah kitab...</span>
+                                </div>
                               </div>
                             </div>
                           )}
@@ -1883,7 +2327,10 @@ export default function App() {
                                   <p className="text-[9px] text-stone-600 truncate mt-1" title={preview.name}>{preview.name}</p>
                                   <button
                                     type="button"
-                                    onClick={() => setKitabImageAttachments((current) => current.filter((_, fileIndex) => fileIndex !== index))}
+                                    onClick={() => {
+                                      setKitabImageAttachments((current) => current.filter((_, fileIndex) => fileIndex !== index));
+                                      setKitabImageOcrTexts((current) => current.filter((_, fileIndex) => fileIndex !== index));
+                                    }}
                                     disabled={isSendingToKitab || isPreparingKitabImages}
                                     className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-700 text-white flex items-center justify-center shadow disabled:bg-stone-400"
                                     aria-label={`Hapus gambar ${preview.name}`}
@@ -1894,6 +2341,42 @@ export default function App() {
                                 </div>
                               ))}
                             </div>
+                          )}
+
+                          {kitabOcrProgress && (
+                            <p role="status" className="flex items-center gap-2 text-xs text-emerald-800">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              {kitabOcrProgress}
+                            </p>
+                          )}
+                          {kitabOcrNotice && (
+                            <p role="status" className="text-xs text-amber-800">{kitabOcrNotice}</p>
+                          )}
+                          {kitabImageAttachments.length > 0 && !isPreparingKitabImages && (
+                            <details className="rounded-lg border border-stone-200 bg-stone-50 p-2 text-xs">
+                              <summary className="cursor-pointer font-medium text-stone-700">Periksa hasil OCR lokal sebelum dikirim</summary>
+                              <div className="mt-2 space-y-2">
+                                {kitabImageOcrTexts.map((text, index) => (
+                                  <label key={index} className="block border-t border-stone-200 pt-2 text-stone-600">
+                                    <span className="mb-1 block font-semibold">Hasil OCR gambar {index + 1} — periksa atau koreksi:</span>
+                                    <textarea
+                                      dir="auto"
+                                      rows={Math.min(8, Math.max(3, text.split("\n").length))}
+                                      value={text}
+                                      onChange={(event) => {
+                                        const editedText = event.target.value;
+                                        setKitabImageOcrTexts((current) =>
+                                          current.map((value, textIndex) => textIndex === index ? editedText : value)
+                                        );
+                                      }}
+                                      className="w-full resize-y rounded-md border border-stone-300 bg-white p-2 text-sm leading-relaxed text-stone-800"
+                                      placeholder="OCR belum menemukan teks. Anda dapat mengetik atau menempelkan teks Arab/Latin di sini."
+                                      spellCheck={false}
+                                    />
+                                  </label>
+                                ))}
+                              </div>
+                            </details>
                           )}
 
                           {kitabChatError && (
@@ -1967,7 +2450,7 @@ export default function App() {
                               <Send className="w-4 h-4" />
                             </button>
                           </div>
-                          <p className="text-[10px] text-stone-500">JPEG, PNG, atau WebP. Maksimal 4 gambar; dikirim ke Gemini untuk analisis dan tidak disimpan oleh aplikasi.</p>
+                          <p className="text-[10px] text-stone-500">JPEG, PNG, atau WebP. Maksimal 4 gambar; OCR Arab/Indonesia diproses di perangkat, lalu gambar dikirim ke layanan AI untuk analisis.</p>
                         </form>
                       </div>
                     )}
@@ -2154,12 +2637,12 @@ export default function App() {
 
               {/* Translation Loading State */}
               {isExplainingTerm && (
-                <div className="p-8 bg-white border border-stone-200 rounded-2xl text-center flex flex-col items-center justify-center gap-3 shadow-sm">
+                <div className="p-6 sm:p-8 bg-white border border-stone-200 rounded-2xl flex flex-col items-center gap-3 shadow-sm">
                   <Loader2 className="w-8 h-8 animate-spin text-gold-heritage" />
-                  <p className="text-sm font-sans text-emerald-deep font-semibold">
+                  <p className="text-center text-sm font-sans text-emerald-deep font-semibold">
                     {translateMode === "terjemah" ? "Menerjemahkan teks ke Bahasa Indonesia..." : "Menghubungkan sanad kamus & kitab makna gandul..."}
                   </p>
-                  <p className="text-xs font-mono text-stone-500">
+                  <p className="text-center text-xs font-mono text-stone-500">
                     {translateMode === "terjemah" ? "Tanpa uraian kaidah dan tarkib." : "Menganalisis kosa kata pesantren dan kedudukan tarkib..."}
                   </p>
                 </div>
@@ -2642,13 +3125,6 @@ export default function App() {
           <p className="text-stone-300 text-center sm:text-left text-xs sm:text-sm">
             © {new Date().getFullYear()} <strong className="text-white font-semibold">KHARISMA PEDIA</strong> — Dirancang sepenuh takzim sebagai Khidmat Digital untuk Santri Nusantara.
           </p>
-          <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-4 text-xs text-stone-300 font-mono">
-            <span className="text-gold-heritage font-semibold">Ta'biri Majelis Syura</span>
-            <span className="hidden sm:inline">•</span>
-            <span>Fiqh Madzhab Al-Arba'ah</span>
-            <span className="hidden sm:inline">•</span>
-            <span>Pesantren Salafiyyah</span>
-          </div>
         </div>
       </footer>
 
