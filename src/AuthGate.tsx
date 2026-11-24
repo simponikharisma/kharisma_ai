@@ -22,6 +22,7 @@ export default function AuthGate({ children }: AuthGateProps) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -30,15 +31,20 @@ export default function AuthGate({ children }: AuthGateProps) {
         const data = await response.json().catch(() => ({}));
         if (!active) return;
         if (response.status === 503) {
+          setSessionExpiresAt(null);
           setError(data.error || "Login belum dikonfigurasi oleh admin.");
           setStatus("signed-out");
           return;
         }
         if (!response.ok) throw new Error(data.error || "Tidak dapat memeriksa sesi login.");
-        setStatus(data.authenticated ? "signed-in" : "signed-out");
+        const expiresAt = Number(data.expiresAt);
+        const authenticated = data.authenticated === true && Number.isFinite(expiresAt) && expiresAt > Date.now();
+        setSessionExpiresAt(authenticated ? expiresAt : null);
+        setStatus(authenticated ? "signed-in" : "signed-out");
       })
       .catch((cause) => {
         if (!active) return;
+        setSessionExpiresAt(null);
         setError(cause instanceof Error ? cause.message : "Tidak dapat memeriksa sesi login.");
         setStatus("signed-out");
       });
@@ -47,6 +53,42 @@ export default function AuthGate({ children }: AuthGateProps) {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (status !== "signed-in" || sessionExpiresAt === null) return;
+
+    let active = true;
+    const expireSession = () => {
+      if (!active) return;
+      active = false;
+      setSessionExpiresAt(null);
+      setPassword("");
+      setError("Sesi login telah berakhir. Silakan masuk kembali.");
+      setStatus("signed-out");
+      void fetch("/api/auth/logout", { method: "POST" }).catch((cause) => {
+        console.error("Gagal membersihkan cookie sesi yang kedaluwarsa:", cause);
+      });
+    };
+    let timeoutId: number | undefined;
+    const checkExpiry = () => {
+      if (Date.now() >= sessionExpiresAt) {
+        expireSession();
+        return;
+      }
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(checkExpiry, Math.min(sessionExpiresAt - Date.now(), 60_000));
+    };
+    checkExpiry();
+    window.addEventListener("focus", checkExpiry);
+    document.addEventListener("visibilitychange", checkExpiry);
+
+    return () => {
+      active = false;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      window.removeEventListener("focus", checkExpiry);
+      document.removeEventListener("visibilitychange", checkExpiry);
+    };
+  }, [status, sessionExpiresAt]);
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -61,7 +103,12 @@ export default function AuthGate({ children }: AuthGateProps) {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || "Login gagal. Silakan coba lagi.");
+      const expiresAt = Number(data.expiresAt);
+      if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+        throw new Error("Server tidak memberikan masa berlaku sesi yang valid.");
+      }
       setPassword("");
+      setSessionExpiresAt(expiresAt);
       setStatus("signed-in");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Login gagal. Silakan coba lagi.");
@@ -74,6 +121,7 @@ export default function AuthGate({ children }: AuthGateProps) {
     try {
       const response = await fetch("/api/auth/logout", { method: "POST" });
       if (!response.ok) throw new Error("Tidak dapat mengakhiri sesi.");
+      setSessionExpiresAt(null);
       setStatus("signed-out");
       setPassword("");
       setError("");
