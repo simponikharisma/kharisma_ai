@@ -130,32 +130,6 @@ async function prepareKitabImage(file: File): Promise<File> {
   }
 }
 
-async function enhanceKitabImageForOcr(file: File): Promise<Blob> {
-  const bitmap = await createImageBitmap(file);
-  try {
-    const maxDimension = 3000;
-    const scale = Math.min(2.5, maxDimension / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("Browser tidak dapat meningkatkan kejelasan gambar.");
-    context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = "high";
-    context.filter = "grayscale(1) contrast(1.35)";
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    const enhanced = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((blob) => {
-        if (blob) resolve(blob);
-        else reject(new Error("Gambar hasil peningkatan tidak dapat dibuat."));
-      }, "image/png");
-    });
-    return enhanced;
-  } finally {
-    bitmap.close();
-  }
-}
-
 function readImageAsBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -997,10 +971,9 @@ export default function App() {
         });
         try {
           for (const [index, file] of preparedFiles.entries()) {
-            setKitabOcrProgress(`Meningkatkan kejelasan dan membaca gambar ${index + 1}/${preparedFiles.length}...`);
+            setKitabOcrProgress(`Membaca gambar ${index + 1}/${preparedFiles.length}...`);
             try {
-              const enhancedImage = await enhanceKitabImageForOcr(file);
-              const result = await worker.recognize(enhancedImage);
+              const result = await worker.recognize(file);
               recognizedTexts.push(cleanOrphanSymbols(result.data.text));
             } catch (error) {
               console.warn(`OCR lokal gagal untuk ${file.name}:`, error);
