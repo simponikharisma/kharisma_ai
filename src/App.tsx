@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, lazy, Suspense } from "react";
 import { useAuthControls } from "./AuthGate";
 import {
   BookOpen,
@@ -9,12 +9,8 @@ import {
   BookMarked,
   Award,
   Compass,
-  HelpCircle,
   Volume2,
-  Printer,
-  Share2,
   Trash2,
-  Plus,
   Check,
   ArrowRight,
   BookOpenCheck,
@@ -33,6 +29,17 @@ import {
 } from "lucide-react";
 
 declare const __APP_BUILD_ID__: string;
+
+// Markdown + syntax highlighting dimuat terpisah agar bundel awal tetap ringan.
+const Markdown = lazy(() => import("./Markdown").then((module) => ({ default: module.Markdown })));
+
+function MarkdownContent({ content, className }: { content: string; className?: string }) {
+  return (
+    <Suspense fallback={<p className={`whitespace-pre-wrap${className ? ` ${className}` : ""}`}>{content}</p>}>
+      <Markdown content={content} className={className} />
+    </Suspense>
+  );
+}
 
 // Predefined categories for Bahtsul Masa'il
 const CATEGORIES = [
@@ -292,7 +299,7 @@ function getImageAnswerParts(text: string) {
       const formattedParts = parts.flatMap((part) => {
         const isQuestionText = /^(?:Teks(?: soal)?(?: Arab)?(?: terbaca)?|النص(?: المقروء)?)$/iu.test(part.label);
         if (part.label && !isQuestionText) return [part];
-        const inlineTranslation = part.text.match(/^([\s\S]*?[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF][\s\S]*?)\s*[\(（]([^()（）]+)[\)）]\s*[.؟!?]*$/u);
+        const inlineTranslation = part.text.match(/^([\s\S]*?[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF][\s\S]*?)\s*[(（]([^()（）]+)[)）]\s*[.؟!?]*$/u);
         if (!inlineTranslation || !ARABIC_SCRIPT.test(inlineTranslation[1]) || ARABIC_SCRIPT.test(inlineTranslation[2]) || !/[A-Za-z]/u.test(inlineTranslation[2])) {
           return [part];
         }
@@ -450,7 +457,7 @@ function getFormattedCalendarDates() {
   const now = new Date();
 
   // Masehi (Gregorian in Indonesian)
-  let masehi = "";
+  let masehi: string;
   try {
     masehi = new Intl.DateTimeFormat("id-ID", {
       weekday: "long",
@@ -464,7 +471,7 @@ function getFormattedCalendarDates() {
   }
 
   // Hijri (Islamic Umal-Qura or Civil)
-  let hijri = "";
+  let hijri: string;
   try {
     const hijriFormatter = new Intl.DateTimeFormat("id-ID-u-ca-islamic-umalqura", {
       day: "numeric",
@@ -551,7 +558,7 @@ export default function App() {
   const [customTerm, setCustomTerm] = useState("");
   const [translateMode, setTranslateMode] = useState<"auto" | "pegon-indo" | "arab-indo" | "istilah" | "terjemah">("auto");
   const [kamusCategoryFilter, setKamusCategoryFilter] = useState<"semua" | "pegon" | "arab" | "istilah">("semua");
-  const [isKamusLoading, setIsKamusLoading] = useState(true);
+  const [, setIsKamusLoading] = useState(true);
   const [isExplainingTerm, setIsExplainingTerm] = useState(false);
   const [kamusResponse, setKamusResponse] = useState<KamusTranslateResult | null>(null);
   const [kamusError, setKamusError] = useState<string | null>(null);
@@ -803,11 +810,6 @@ export default function App() {
     }
   };
 
-  // Backwards compatibility alias
-  const handleTTS = (textToSpeak: string, voiceId: string = "default") => {
-    playHumanVoice(textToSpeak, voiceId);
-  };
-
   // ---------------------------------------------------------
   // SERVER INTERACTIONS
   // ---------------------------------------------------------
@@ -856,7 +858,7 @@ export default function App() {
   };
 
   const toggleBookmark = (result: BahtsulMasailResult) => {
-    let current = [...bookmarks];
+    const current = [...bookmarks];
     const index = current.findIndex(b => b.judul === result.judul);
     
     if (index >= 0) {
@@ -1811,13 +1813,10 @@ export default function App() {
                           </span>
                         </button>
                       </div>
-                      <div className="text-[15px] sm:text-base text-gray-800 leading-relaxed space-y-3 font-sans">
-                        {bmResult.ulasan.split("\n\n").map((para, idx) => (
-                          <p key={idx} className="indent-3 sm:indent-4 text-justify">
-                            {para}
-                          </p>
-                        ))}
-                      </div>
+                      <MarkdownContent
+                        content={bmResult.ulasan}
+                        className="text-[15px] sm:text-base text-gray-800 leading-relaxed font-sans"
+                      />
 
                       {bmResult.khilaf && bmResult.khilaf.length > 0 && (
                         <div className="mt-4 border-t border-dashed border-stone-200 pt-4">
@@ -2232,7 +2231,11 @@ export default function App() {
                                     );
                                   })()
                                 ) : (
-                                  Boolean(msg.content?.trim()) && <p className="whitespace-pre-wrap">{msg.content}</p>
+                                  Boolean(msg.content?.trim()) && (
+                                    msg.role === "model"
+                                      ? <MarkdownContent content={msg.content} />
+                                      : <p className="whitespace-pre-wrap">{msg.content}</p>
+                                  )
                                 )}
                                 {msg.role === "user" && msg.attachments && msg.attachments.length > 0 && (
                                   <p className="mt-2 text-xs text-white/75">Gambar terlampir: {msg.attachments.join(", ")}</p>
@@ -2713,9 +2716,10 @@ export default function App() {
                     <p className="text-[10px] sm:text-xs font-mono text-stone-500 uppercase tracking-wide mb-1 font-semibold">
                       PENJELASAN KONTEKS PESANTREN & KITAB:
                     </p>
-                    <p className="text-[15px] sm:text-base text-gray-800 leading-relaxed font-sans text-justify bg-stone-50/80 p-4 rounded-xl border border-stone-200">
-                      {kamusResponse.penjelasanMendalam}
-                    </p>
+                    <MarkdownContent
+                      content={kamusResponse.penjelasanMendalam}
+                      className="text-[15px] sm:text-base text-gray-800 leading-relaxed font-sans bg-stone-50/80 p-4 rounded-xl border border-stone-200"
+                    />
                   </div>}
 
                   {/* Example Usage */}

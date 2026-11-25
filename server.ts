@@ -1909,12 +1909,12 @@ function getDictionaryKamusResult(key: string, mode: string = "auto"): any {
 // ---------------------------------------------------------
 
 // Endpoint 1: Hello & Health
-app.get("/api/health", (req, res) => {
+app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", geminiConfigured: !!ai, timestamp: new Date() });
 });
 
 // Endpoint 2: Get Kitab Catalog
-app.get("/api/kitab", (req, res) => {
+app.get("/api/kitab", (_req, res) => {
   res.json(kitabCatalog);
 });
 
@@ -2155,7 +2155,7 @@ app.post("/api/bahtsul-masail", aiRateLimiter, async (req, res) => {
 });
 
 // Endpoint 4: Get Glossary Term / Kamus Turath
-app.get("/api/kamus", (req, res) => {
+app.get("/api/kamus", (_req, res) => {
   res.json(kamusTurath);
 });
 
