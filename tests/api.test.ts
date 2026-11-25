@@ -8,6 +8,8 @@ type StubMarker = "gemini-sukses" | "or-sukses" | "or-retry" | "or-gagal" | "or-
 const MARKERS: StubMarker[] = ["gemini-sukses", "or-sukses", "or-retry", "or-gagal", "or-timeout"];
 const TEST_USERNAME = "admin@test.local";
 const TEST_PASSWORD = "TestPassword123!";
+const TEST_JPEG_BASE64 = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]).toString("base64");
+const TEST_PNG_BASE64 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]).toString("base64");
 
 function kamusPayload(marker: string) {
   return {
@@ -55,6 +57,22 @@ function createStubServer() {
     const serialized = JSON.stringify(payload ?? "");
     const marker = MARKERS.find((candidate) => serialized.includes(candidate)) ?? "tanpa-marker";
     state.perMarker.set(marker, (state.perMarker.get(marker) ?? 0) + 1);
+
+    if (req.url?.includes("generateContent") && serialized.includes("Lakukan OCR")) {
+      state.gemini += 1;
+      sendJson(res, 200, {
+        candidates: [{
+          content: {
+            role: "model",
+            parts: [{ text: JSON.stringify({ texts: ["١. ما حكم الطهارة؟", "2. Apa hukum sholat?"] }) }]
+          },
+          finishReason: "STOP",
+          index: 0
+        }],
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 12, totalTokenCount: 22 }
+      });
+      return;
+    }
 
     if (req.url?.includes("generateContent")) {
       state.gemini += 1;
@@ -334,6 +352,26 @@ describe("validasi permintaan", () => {
     expect(result.response.status).toBe(400);
   });
 
+  it("memvalidasi permintaan OCR gambar", async () => {
+    const empty = await api("/api/ocr", { body: { images: [] } });
+    expect(empty.response.status).toBe(400);
+
+    const badType = await api("/api/ocr", {
+      body: { images: [{ mimeType: "image/gif", data: TEST_JPEG_BASE64 }] }
+    });
+    expect(badType.response.status).toBe(400);
+
+    const badData = await api("/api/ocr", {
+      body: { images: [{ mimeType: "image/jpeg", data: "bukan base64!" }] }
+    });
+    expect(badData.response.status).toBe(400);
+
+    const badSignature = await api("/api/ocr", {
+      body: { images: [{ mimeType: "image/png", data: TEST_JPEG_BASE64 }] }
+    });
+    expect(badSignature.response.status).toBe(400);
+  });
+
   it("memvalidasi teks voice sebelum menyentuh penyedia AI", async () => {
     const empty = await api("/api/voice/speak", { body: { text: "   " } });
     expect(empty.response.status).toBe(400);
@@ -371,6 +409,21 @@ describe("retry, timeout, failover, dan cache penyedia AI", () => {
     expect(cached.json.terjemahan).toBe("terjemahan-gemini-sukses");
     expect(stubState.gemini).toBe(geminiBefore + 1);
     expect(stubState.openrouter).toBe(openRouterBefore);
+  });
+
+  it("memproses OCR gambar melalui penyedia AI", async () => {
+    const geminiBefore = stubState.gemini;
+    const result = await api("/api/ocr", {
+      body: {
+        images: [
+          { mimeType: "image/jpeg", data: TEST_JPEG_BASE64 },
+          { mimeType: "image/png", data: TEST_PNG_BASE64 }
+        ]
+      }
+    });
+    expect(result.response.status).toBe(200);
+    expect(result.json.texts).toEqual(["١. ما حكم الطهارة؟", "2. Apa hukum sholat?"]);
+    expect(stubState.gemini).toBe(geminiBefore + 1);
   });
 
   it("beralih ke OpenRouter saat Gemini gagal", async () => {

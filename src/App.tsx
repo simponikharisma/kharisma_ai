@@ -1,6 +1,16 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from "react";
 import { useAuthControls } from "./AuthGate";
 import {
+  buildFirstDalilNumberByText,
+  cleanOrphanSymbols,
+  dedupeSectionDalil,
+  getDalilForImageQuestion,
+  getImageAnswerParts,
+  getOcrQuestionText,
+  isArabicFirst,
+  normalizeQuestionNumber
+} from "./lib/imageAnswer";
+import {
   BookOpen,
   Search,
   MessageSquare,
@@ -56,8 +66,9 @@ const MAX_KITAB_IMAGE_SIZE_BYTES = 1_200_000;
 const MAX_KITAB_IMAGES_SIZE_BYTES = 2_400_000;
 const MAX_ORIGINAL_KITAB_IMAGE_SIZE_BYTES = 15_000_000;
 const AI_REQUEST_TIMEOUT_MS = 190_000;
+const OCR_REQUEST_TIMEOUT_MS = 60_000;
+const DEFAULT_KITAB_IMAGE_PROMPT = "Mohon baca semua soal pada gambar. Jawab per nomor dengan urutan: Teks OCR (salinan apa adanya), Terjemah (jika Arab), Penjelasan, lalu Dalil. Jika jawaban sama dengan nomor sebelumnya, cukup tulis \"Sama dengan nomor N\" tanpa mengulang dalil dan penjelasan.";
 const SUPPORTED_KITAB_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-const ARABIC_SCRIPT = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
 
 function splitSpeechText(text: string, maxLength = 750) {
   const chunks: string[] = [];
@@ -155,6 +166,34 @@ function readImageAsBase64(file: File): Promise<string> {
     reader.onerror = () => reject(new Error(`Gambar ${file.name} gagal dibaca.`));
     reader.readAsDataURL(file);
   });
+}
+
+async function requestServerKitabOcr(files: File[]): Promise<string[]> {
+  const images = await Promise.all(files.map(async (file) => ({
+    mimeType: file.type,
+    data: await readImageAsBase64(file)
+  })));
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), OCR_REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch("/api/ocr", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({ images })
+    });
+    const data = await readJsonResponse<{ texts?: unknown }>(res);
+    const texts = data.texts;
+    if (!Array.isArray(texts)) {
+      throw new Error("Respons OCR server tidak lengkap.");
+    }
+    return files.map((_, index) => {
+      const value = texts[index];
+      return typeof value === "string" ? cleanOrphanSymbols(value) : "";
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 // Premade questions for Bahtsul Masa'il (Mas'alah Board)
@@ -257,169 +296,6 @@ interface ChatMessage {
     nomorSoal?: string;
     rujukDalilNomorSoal?: string;
   }[];
-}
-
-function getImageAnswerParts(text: string) {
-  const cleanedText = cleanOrphanSymbols(text);
-  const markerPattern = /((?:^|[\r\n]|[؟?]|\()\s*)([0-9٠-٩۰-۹]+)(?:\)|[.)\-:\u2010-\u2015\u2212]|(?=\r?\n)|(?=\s*[\p{L}]))\s*/gmu;
-  const markers = Array.from(cleanedText.matchAll(markerPattern));
-  const questionParts = markers.map((marker, index) => {
-    const start = (marker.index || 0) + marker[0].length;
-    const nextMarker = markers[index + 1];
-    const nextMarkerPrefix = nextMarker?.[1] || "";
-    const end = nextMarker
-      ? (nextMarker.index || 0) + (nextMarkerPrefix.startsWith("(") ? 0 : nextMarkerPrefix.length)
-      : cleanedText.length;
-    return { number: marker[2], text: cleanedText.slice(start, end).trim() };
-  });
-  const intro = markers.length ? cleanedText.slice(0, markers[0].index || 0).trim() : "";
-  const sections = questionParts.length
-    ? questionParts
-    : [{ number: "", text: cleanedText }];
-  const labelPattern = /(^|\s)(Teks(?:\s+soal)?(?:\s+Arab)?(?:\s+terbaca)?|Terjemah(?:an)?|Jawaban|Penjelasan|Ibarat(?:\s*\/\s*Dalil)?|Dalil|النص(?:\s+المقروء)?|الترجمة|الجواب|الإجابة|الشرح|العبارة)(?=[:：]|\s|[A-Z(]|$)\s*[:：]?\s*/giu;
-
-  return {
-    intro,
-    sections: sections.map((section) => {
-      const labels = Array.from(section.text.matchAll(labelPattern));
-      const parts: { label: string; text: string }[] = [];
-      if (labels.length === 0) {
-        parts.push({ label: "", text: section.text });
-      } else {
-        if ((labels[0].index || 0) > 0) {
-          parts.push({ label: "", text: section.text.slice(0, (labels[0].index || 0) + labels[0][1].length).trim() });
-        }
-        labels.forEach((label, index) => {
-          const start = (label.index || 0) + label[0].length;
-          const end = labels[index + 1]?.index ?? section.text.length;
-          parts.push({ label: label[2], text: section.text.slice(start, end).trim() });
-        });
-      }
-
-      const formattedParts = parts.flatMap((part) => {
-        const isQuestionText = /^(?:Teks(?: soal)?(?: Arab)?(?: terbaca)?|النص(?: المقروء)?)$/iu.test(part.label);
-        if (part.label && !isQuestionText) return [part];
-        const inlineTranslation = part.text.match(/^([\s\S]*?[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF][\s\S]*?)\s*[(（]([^()（）]+)[)）]\s*[.؟!?]*$/u);
-        if (!inlineTranslation || !ARABIC_SCRIPT.test(inlineTranslation[1]) || ARABIC_SCRIPT.test(inlineTranslation[2]) || !/[A-Za-z]/u.test(inlineTranslation[2])) {
-          return [part];
-        }
-        return [
-          { label: part.label, text: inlineTranslation[1].trim() },
-          { label: "Terjemahan", text: inlineTranslation[2].trim() }
-        ];
-      });
-
-      const hasInlineTranslation = formattedParts.some((part) => /^Terjemah(?:an)?$/iu.test(part.label));
-      const visibleParts = (hasInlineTranslation
-        ? formattedParts.filter((part) => !(/^Terjemah(?:an)?$/iu.test(part.label) && /^(?:tidak diperlukan|tidak ada)\.?$/iu.test(part.text)))
-        : formattedParts)
-        .map((part) => ({
-          label: normalizeImageAnswerLabel(part.label, part.text),
-          text: part.text
-        }))
-        .filter((part) => Boolean(part.label))
-        .sort((left, right) => imageAnswerLabelOrder(left.label) - imageAnswerLabelOrder(right.label));
-      const mergedParts = visibleParts.reduce<{ label: string; text: string }[]>((result, part) => {
-        if (part.label === "Penjelasan") {
-          const existingExplanation = result.find((item) => item.label === "Penjelasan");
-          if (existingExplanation) {
-            existingExplanation.text = [existingExplanation.text, part.text].filter(Boolean).join("\n\n");
-          } else {
-            result.push(part);
-          }
-        } else {
-          result.push(part);
-        }
-        return result;
-      }, []);
-      return { ...section, parts: mergedParts };
-    })
-  };
-}
-
-function getOcrQuestionText(ocrText: string | undefined, questionNumber: string) {
-  if (!ocrText?.trim()) return "";
-  const cleanedText = cleanOrphanSymbols(ocrText.replace(/\[OCR gambar \d+\]/giu, ""));
-  const markerPattern = /((?:^|[\r\n]|[؟?]|\()\s*)([0-9٠-٩۰-۹]+)(?:\)|[.)\-:\u2010-\u2015\u2212]|(?=\r?\n)|(?=\s*[\p{L}]))\s*/gmu;
-  const markers = Array.from(cleanedText.matchAll(markerPattern));
-  const normalizedNumber = normalizeQuestionNumber(questionNumber);
-  const markerIndex = markers.findIndex((marker) => normalizeQuestionNumber(marker[2]) === normalizedNumber);
-  if (markerIndex < 0) return "";
-  const marker = markers[markerIndex];
-  const start = (marker.index || 0) + marker[0].length;
-  const nextMarker = markers[markerIndex + 1];
-  const nextPrefix = nextMarker?.[1] || "";
-  const end = nextMarker
-    ? (nextMarker.index || 0) + (nextPrefix.startsWith("(") ? 0 : nextPrefix.length)
-    : cleanedText.length;
-  const questionText = cleanedText.slice(start, end).trim();
-  return ARABIC_SCRIPT.test(questionText) ? questionText : "";
-}
-
-function normalizeImageAnswerLabel(label: string, text: string) {
-  if (/^(?:Teks(?: soal)?(?: Arab)?(?: terbaca)?|النص(?: المقروء)?)$/iu.test(label)) {
-    return isArabicFirst(text) ? "Teks Arab" : "Soal";
-  }
-  if (/^(?:Terjemah(?:an)?|الترجمة)$/iu.test(label)) return "Terjemah";
-  if (/^(?:Jawaban|الجواب|الإجابة)$/iu.test(label)) return "Penjelasan";
-  if (/^(?:Penjelasan|الشرح)$/iu.test(label)) return "Penjelasan";
-  if (/^(?:Ibarat(?:\s*\/\s*Dalil)?|Dalil|العبارة)$/iu.test(label)) return "";
-  if (!label) return isArabicFirst(text) ? "Teks Arab" : "Jawaban";
-  return label;
-}
-
-function imageAnswerLabelOrder(label: string) {
-  const order: Record<string, number> = {
-    "Teks Arab": 0,
-    Soal: 0,
-    Terjemah: 1,
-    Jawaban: 2,
-    Penjelasan: 3
-  };
-  return order[label] ?? 4;
-}
-
-function cleanOrphanSymbols(text: string) {
-  return text
-    .replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu, "")
-    .replace(/[©®™]/gu, "")
-    .replace(/(^|\s)[.·•]+(?=[\p{L}0-9٠-٩۰-۹]|\s|$)/gu, "$1")
-    .replace(/[ \t]{2,}/gu, " ")
-    .trim();
-}
-
-function normalizeQuestionNumber(number: string) {
-  const arabicDigits = "٠١٢٣٤٥٦٧٨٩";
-  const persianDigits = "۰۱۲۳۴۵۶۷۸۹";
-  const digits = number.match(/[0-9٠-٩۰-۹]/gu) || [];
-  return digits.map((digit) => {
-    if (/[0-9]/u.test(digit)) return digit;
-    const arabicIndex = arabicDigits.indexOf(digit);
-    return String(arabicIndex >= 0 ? arabicIndex : persianDigits.indexOf(digit));
-  }).join("");
-}
-
-function getDalilForImageQuestion(
-  dalil: ChatMessage["dalil"],
-  questionNumber: string,
-  questionIndex: number
-) {
-  if (!dalil?.length) return [];
-  const normalizedNumber = normalizeQuestionNumber(questionNumber);
-  const matchingDalil = dalil.filter((item) =>
-    item.nomorSoal && normalizeQuestionNumber(item.nomorSoal) === normalizedNumber
-  );
-  if (matchingDalil.length > 0) return matchingDalil;
-  if (dalil.every((item) => !item.nomorSoal)) {
-    return dalil[questionIndex] ? [dalil[questionIndex]] : [];
-  }
-  return [];
-}
-
-function isArabicFirst(text: string) {
-  const firstArabic = text.search(ARABIC_SCRIPT);
-  const firstLatin = text.search(/[A-Za-z0-9]/);
-  return firstArabic >= 0 && (firstLatin < 0 || firstArabic < firstLatin);
 }
 
 async function readJsonResponse<T>(response: Response): Promise<T> {
@@ -960,49 +836,72 @@ export default function App() {
         throw new Error("Total ukuran gambar maksimal 2,4 MB setelah diproses.");
       }
 
-      const recognizedTexts: string[] = [];
-      let ocrHadError = false;
+      const recognizedTexts: string[] = Array.from({ length: preparedFiles.length }, () => "");
+      let serverOcrFailed = false;
+      setKitabOcrProgress("Membaca teks gambar di server...");
       try {
-        const { createWorker } = await import("tesseract.js");
-        const worker = await createWorker(["ara", "ind"], 1, {
-          langPath: "https://tessdata.projectnaptha.com/4.0.0",
-          logger: (progress) => {
-            if (progress.status === "recognizing text") {
-              setKitabOcrProgress(`Membaca teks gambar secara lokal (${Math.round((progress.progress || 0) * 100)}%)...`);
-            } else if (progress.status === "loading language traineddata") {
-              setKitabOcrProgress("Memuat model OCR Arab dan Indonesia gratis...");
-            }
-          }
+        const serverTexts = await requestServerKitabOcr(preparedFiles);
+        serverTexts.forEach((text, index) => {
+          recognizedTexts[index] = text;
         });
-        try {
-          for (const [index, file] of preparedFiles.entries()) {
-            setKitabOcrProgress(`Membaca gambar ${index + 1}/${preparedFiles.length}...`);
-            try {
-              const result = await worker.recognize(file);
-              recognizedTexts.push(cleanOrphanSymbols(result.data.text));
-            } catch (error) {
-              console.warn(`OCR lokal gagal untuk ${file.name}:`, error);
-              ocrHadError = true;
-              recognizedTexts.push("");
-            }
-          }
-        } finally {
-          await worker.terminate();
-        }
-        if (ocrHadError) {
-          setKitabOcrNotice("Sebagian teks tidak terbaca OCR. Periksa hasilnya; gambar asli tetap dikirim agar AI dapat membantu.");
-        } else if (!recognizedTexts.some(Boolean)) {
-          setKitabOcrNotice("Teks belum terbaca oleh OCR lokal. Gambar asli tetap akan dikirim agar AI mencoba membacanya.");
-        }
       } catch (error) {
-        console.warn("OCR lokal Arab/Indonesia tidak tersedia:", error);
-        recognizedTexts.push(...Array.from({ length: preparedFiles.length - recognizedTexts.length }, () => ""));
-        setKitabOcrNotice("OCR gratis tidak dapat dimuat. Gambar asli tetap bisa dibaca oleh AI.");
+        console.warn("OCR server tidak tersedia:", error);
+        serverOcrFailed = true;
+      }
+
+      let localOcrFailed = false;
+      const unreadableIndexes = preparedFiles
+        .map((_, index) => index)
+        .filter((index) => !recognizedTexts[index]?.trim());
+      if (unreadableIndexes.length > 0) {
+        setKitabOcrProgress(serverOcrFailed
+          ? "OCR server tidak tersedia, memakai OCR lokal perangkat..."
+          : `Teks pada ${unreadableIndexes.length} gambar belum terbaca, mencoba OCR lokal...`);
+        try {
+          const { createWorker } = await import("tesseract.js");
+          const worker = await createWorker(["ara", "ind"], 1, {
+            langPath: "https://tessdata.projectnaptha.com/4.0.0",
+            logger: (progress) => {
+              if (progress.status === "recognizing text") {
+                setKitabOcrProgress(`Membaca teks gambar secara lokal (${Math.round((progress.progress || 0) * 100)}%)...`);
+              } else if (progress.status === "loading language traineddata") {
+                setKitabOcrProgress("Memuat model OCR Arab dan Indonesia...");
+              }
+            }
+          });
+          try {
+            await worker.setParameters({ preserve_interword_spaces: "1" });
+            for (const index of unreadableIndexes) {
+              setKitabOcrProgress(`Membaca gambar ${index + 1}/${preparedFiles.length} dengan OCR lokal...`);
+              try {
+                const result = await worker.recognize(preparedFiles[index]);
+                recognizedTexts[index] = cleanOrphanSymbols(result.data.text);
+              } catch (error) {
+                console.warn(`OCR lokal gagal untuk ${preparedFiles[index].name}:`, error);
+              }
+            }
+          } finally {
+            await worker.terminate();
+          }
+        } catch (error) {
+          console.warn("OCR lokal Arab/Indonesia tidak tersedia:", error);
+          localOcrFailed = true;
+        }
+      }
+
+      if (serverOcrFailed) {
+        setKitabOcrNotice(recognizedTexts.some(Boolean)
+          ? "OCR server tidak tersedia; hasil OCR lokal mungkin kurang akurat. Periksa dan koreksi teks sebelum dikirim."
+          : "OCR server dan OCR lokal tidak tersedia. Gambar asli tetap dikirim agar AI membacanya; Anda juga dapat mengetik teks soal.");
+      } else if (!recognizedTexts.some(Boolean)) {
+        setKitabOcrNotice("Teks belum terbaca otomatis. Gambar asli tetap dikirim agar AI mencoba membacanya; Anda dapat mengoreksi teks di bawah.");
+      } else if (localOcrFailed || recognizedTexts.some((text) => !text.trim())) {
+        setKitabOcrNotice("Sebagian teks belum terbaca. Periksa dan lengkapi hasil OCR sebelum dikirim.");
       }
 
       setKitabImageAttachments((current) => [...current, ...preparedFiles]);
       setKitabImageOcrTexts((current) => [...current, ...recognizedTexts]);
-      setKitabInput((current) => current.trim() ? current : "Mohon baca dan kaji semua soal pada gambar terlampir. Susun jawaban per soal, terjemahkan teks Arab bila perlu, dan sertakan dalil Arab yang relevan untuk setiap soal.");
+      setKitabInput((current) => current.trim() ? current : DEFAULT_KITAB_IMAGE_PROMPT);
     } catch (error) {
       setKitabChatError(error instanceof Error ? error.message : "Gambar tidak dapat diproses.");
     } finally {
@@ -1025,7 +924,7 @@ export default function App() {
       .join("\n\n");
     const userMessage: ChatMessage = {
       role: "user",
-      content: userPrompt || "Mohon baca dan kaji semua soal pada gambar terlampir. Susun jawaban per soal, terjemahkan teks Arab bila perlu, dan sertakan dalil Arab yang relevan untuk setiap soal.",
+      content: userPrompt || DEFAULT_KITAB_IMAGE_PROMPT,
       attachments: kitabImageAttachments.map((file) => file.name),
       sourceOcrText
     };
@@ -1232,12 +1131,16 @@ export default function App() {
         <p className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-600">
           Dalil Arab sama dengan nomor {d.rujukDalilNomorSoal}.
         </p>
-      ) : (
+      ) : d.teksArab?.trim() ? (
         <div className={`bg-amber-50/70 border border-gold-heritage/30 rounded-xl p-3 ${selectedKitabIsNazam ? "ring-1 ring-gold-heritage/10" : ""}`}>
           <p className="text-arabic text-[18px] sm:text-[20px] text-emerald-deep" dir="rtl" lang="ar">{d.teksArab}</p>
           <p className="text-[11px] sm:text-xs text-stone-600 italic mt-2">{d.terjemahan}</p>
           <p className="text-[10px] font-mono text-stone-500 mt-1">— {d.rujukan}</p>
         </div>
+      ) : (
+        <p className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-600">
+          Dalil Arab untuk soal ini belum dapat dipastikan.
+        </p>
       )}
       {selectedKitabIsNazam && di < items.length - 1 && (
         <div className="flex items-center gap-2 px-2 py-0.5" role="separator" aria-label="Pemisah antar bait nadham">
@@ -2169,20 +2072,20 @@ export default function App() {
                                 {Boolean(msg.content?.trim()) && msg.role === "model" && msg.imageAnswer ? (
                                   (() => {
                                     const formatted = getImageAnswerParts(msg.content);
+                                    const firstDalilNumberByText = buildFirstDalilNumberByText(msg.dalil);
                                     return (
                                       <div className="space-y-3">
                                         {formatted.sections.map((section, sectionIndex) => {
                                           const sectionDalil = section.number
                                             ? getDalilForImageQuestion(msg.dalil, section.number, sectionIndex)
                                             : [];
+                                          const displayDalil = dedupeSectionDalil(sectionDalil, section.number, firstDalilNumberByText);
                                           const ocrQuestionText = section.number
                                             ? getOcrQuestionText(msg.sourceOcrText, section.number)
                                             : "";
-                                          const displayParts = ocrQuestionText
-                                            ? [
-                                                { label: "Teks Arab", text: ocrQuestionText },
-                                                ...section.parts.filter((part) => !/^(?:Teks Arab|Soal)$/iu.test(part.label))
-                                              ]
+                                          const hasOcrTextPart = section.parts.some((part) => part.label === "Teks hasil OCR");
+                                          const displayParts = !hasOcrTextPart && ocrQuestionText
+                                            ? [{ label: "Teks hasil OCR", text: ocrQuestionText }, ...section.parts]
                                             : section.parts;
                                           return (
                                           <React.Fragment key={`${i}-${sectionIndex}`}>
@@ -2195,7 +2098,7 @@ export default function App() {
                                                   key={partIndex}
                                                   className={`${partIndex > 0 ? "border-t border-stone-200 pt-2" : ""} whitespace-pre-wrap text-sm`}
                                                 >
-                                                  {part.label && !/^(?:Teks soal terbaca|Teks Arab)$/iu.test(part.label) && (
+                                                  {part.label && (
                                                     <span
                                                       dir={isArabicFirst(part.label) ? "rtl" : "ltr"}
                                                       className={`mb-0.5 block font-semibold text-stone-700 ${isArabicFirst(part.label) ? "text-right" : "text-left"}`}
@@ -2215,7 +2118,7 @@ export default function App() {
                                               {section.number && (
                                                 <div className="border-t border-stone-200 pt-2">
                                                   <h5 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-emerald-800">Dalil</h5>
-                                                  {sectionDalil.length > 0 ? renderDalilCards(sectionDalil, `${i}-${sectionIndex}`) : (
+                                                  {displayDalil.length > 0 ? renderDalilCards(displayDalil, `${i}-${sectionIndex}`) : (
                                                     <p className="text-xs text-stone-600">Dalil khusus untuk soal ini belum dapat dipastikan.</p>
                                                   )}
                                                 </div>
@@ -2338,7 +2241,7 @@ export default function App() {
                           )}
                           {kitabImageAttachments.length > 0 && !isPreparingKitabImages && (
                             <details className="rounded-lg border border-stone-200 bg-stone-50 p-2 text-xs">
-                              <summary className="cursor-pointer font-medium text-stone-700">Periksa hasil OCR lokal sebelum dikirim</summary>
+                              <summary className="cursor-pointer font-medium text-stone-700">Periksa hasil OCR sebelum dikirim</summary>
                               <div className="mt-2 space-y-2">
                                 {kitabImageOcrTexts.map((text, index) => (
                                   <label key={index} className="block border-t border-stone-200 pt-2 text-stone-600">
@@ -2434,7 +2337,7 @@ export default function App() {
                               <Send className="w-4 h-4" />
                             </button>
                           </div>
-                          <p className="text-[10px] text-stone-500">JPEG, PNG, atau WebP. Maksimal 4 gambar; OCR Arab/Indonesia diproses di perangkat, lalu gambar dikirim ke layanan AI untuk analisis.</p>
+                          <p className="text-[10px] text-stone-500">JPEG, PNG, atau WebP. Maksimal 4 gambar; OCR diproses otomatis di server agar akurat di semua perangkat, lalu gambar dikirim ke layanan AI untuk analisis.</p>
                         </form>
                       </div>
                     )}
