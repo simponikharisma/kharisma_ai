@@ -4,7 +4,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { createTtlCache } from "./lib/ttlCache";
+import { createTtlCache } from "./lib/ttlCache.ts";
 
 dotenv.config();
 
