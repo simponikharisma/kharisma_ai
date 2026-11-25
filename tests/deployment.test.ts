@@ -30,10 +30,14 @@ describe("kompatibilitas deployment Vercel", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("menyertakan server.ts dan folder lib pada setiap Vercel function", () => {
+  it("menyertakan server.ts dan helper cache pada setiap Vercel function", () => {
     const config = JSON.parse(readFileSync(path.join(projectRoot, "vercel.json"), "utf8"));
-    for (const [route, fn] of Object.entries(config.functions ?? {}) as [string, { includeFiles?: string[] }][]) {
-      expect(fn.includeFiles, route).toEqual(expect.arrayContaining(["server.ts", "lib/**"]));
+    const functions = Object.entries(config.functions ?? {}) as [string, { includeFiles?: unknown }][];
+    expect(functions.length).toBeGreaterThan(0);
+    for (const [route, fn] of functions) {
+      expect(typeof fn.includeFiles, route).toBe("string");
+      expect(fn.includeFiles, route).toContain("server.ts");
+      expect(fn.includeFiles, route).toContain("lib/ttlCache.ts");
     }
   });
 });

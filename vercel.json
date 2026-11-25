@@ -29,22 +29,22 @@
   ],
   "functions": {
     "api/[...route].ts": {
-      "includeFiles": ["server.ts", "lib/**"]
+      "includeFiles": "{server.ts,lib/ttlCache.ts}"
     },
     "api/kamus/translate.ts": {
-      "includeFiles": ["server.ts", "lib/**"]
+      "includeFiles": "{server.ts,lib/ttlCache.ts}"
     },
     "api/voice/speak.ts": {
-      "includeFiles": ["server.ts", "lib/**"]
+      "includeFiles": "{server.ts,lib/ttlCache.ts}"
     },
     "api/auth/login.ts": {
-      "includeFiles": ["server.ts", "lib/**"]
+      "includeFiles": "{server.ts,lib/ttlCache.ts}"
     },
     "api/auth/session.ts": {
-      "includeFiles": ["server.ts", "lib/**"]
+      "includeFiles": "{server.ts,lib/ttlCache.ts}"
     },
     "api/auth/logout.ts": {
-      "includeFiles": ["server.ts", "lib/**"]
+      "includeFiles": "{server.ts,lib/ttlCache.ts}"
     }
   }
 }
