@@ -3,6 +3,8 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["src/**/*.test.{ts,tsx}"]
+    include: ["src/**/*.test.{ts,tsx}", "lib/**/*.test.ts", "tests/**/*.test.ts"],
+    testTimeout: 15000,
+    hookTimeout: 30000
   }
 });

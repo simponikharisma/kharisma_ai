@@ -4,6 +4,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createTtlCache } from "./lib/ttlCache";
 
 dotenv.config();
 
@@ -18,6 +19,9 @@ const AI_ATTEMPT_TIMEOUT_MS = Math.min(
 const AI_RETRY_MAX_ATTEMPTS = Math.min(Math.max(Number(process.env.AI_RETRY_MAX_ATTEMPTS) || 3, 1), 5);
 const AI_RETRY_BASE_DELAY_MS = Math.min(Math.max(Number(process.env.AI_RETRY_BASE_DELAY_MS) || 800, 100), 5000);
 const AI_MIN_RETRY_BUDGET_MS = 5000;
+const AI_CACHE_TTL_MS = Math.min(Math.max(Number(process.env.AI_CACHE_TTL_MS) || 30 * 60_000, 1_000), 24 * 60 * 60_000);
+const AI_CACHE_MAX_ENTRIES = Math.min(Math.max(Number(process.env.AI_CACHE_MAX_ENTRIES) || 200, 1), 5_000);
+const VOICE_CACHE_MAX_ENTRIES = Math.min(AI_CACHE_MAX_ENTRIES, 50);
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
 type LogFields = Record<string, string | number | boolean | undefined>;
@@ -1918,9 +1922,9 @@ app.get("/api/kitab", (_req, res) => {
   res.json(kitabCatalog);
 });
 
-// In-Memory Fast Cache for Bahtsul Masail & Kamus
-const bahtsulMasailCache = new Map<string, any>();
-const kamusCache = new Map<string, any>();
+// In-Memory Fast Cache for Bahtsul Masail & Kamus (dibatasi ukuran dan TTL)
+const bahtsulMasailCache = createTtlCache<any>({ maxEntries: AI_CACHE_MAX_ENTRIES, ttlMs: AI_CACHE_TTL_MS });
+const kamusCache = createTtlCache<any>({ maxEntries: AI_CACHE_MAX_ENTRIES, ttlMs: AI_CACHE_TTL_MS });
 
 // Pre-seeded authoritative rulings for board queries (Instant & Expert-Verified)
 const PRESEEDED_BAHTSUL_MASAIL: Record<string, any> = {
@@ -2593,8 +2597,8 @@ app.post("/api/chat-kitab", aiRateLimiter, async (req, res) => {
   }
 });
 
-// In-memory cache for generated speech audio
-const voiceCache = new Map<string, string>();
+// In-memory cache for generated speech audio (dibatasi ukuran dan TTL)
+const voiceCache = createTtlCache<string>({ maxEntries: VOICE_CACHE_MAX_ENTRIES, ttlMs: AI_CACHE_TTL_MS });
 
 // Endpoint 6: Gemini TTS with a consistent male narrator and Arabic support
 app.post("/api/voice/speak", aiRateLimiter, async (req, res) => {
@@ -2695,7 +2699,6 @@ app.post("/api/voice/speak", aiRateLimiter, async (req, res) => {
     }
 
     const dataUri = `data:${mimeType};base64,${base64Audio}`;
-    if (voiceCache.size > 100) voiceCache.clear();
     voiceCache.set(cacheKey, dataUri);
 
     logEvent("info", "voice_speak_success", {
