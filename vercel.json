@@ -1,5 +1,32 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self';base-uri 'self';font-src 'self' https://fonts.gstatic.com data:;form-action 'self';frame-ancestors 'none';img-src 'self' data: blob:;object-src 'none';script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net;script-src-attr 'none';style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;media-src 'self' data: blob:;connect-src 'self' https://cdn.jsdelivr.net https://tessdata.projectnaptha.com;worker-src 'self' blob:;manifest-src 'self'"
+        },
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=15552000; includeSubDomains"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "SAMEORIGIN"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        }
+      ]
+    }
+  ],
   "functions": {
     "api/[...route].ts": {
       "includeFiles": "server.ts"
