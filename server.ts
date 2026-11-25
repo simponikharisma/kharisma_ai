@@ -155,7 +155,7 @@ if (geminiApiKey) {
 } else {
   console.warn(openRouterApiKey
     ? "GEMINI_API_KEY is not defined. OpenRouter text fallback is enabled; voice synthesis still requires Gemini."
-    : "Neither GEMINI_API_KEY nor OPENROUTER_API_KEY is configured. Generative features will use local fallbacks.");
+    : "Neither GEMINI_API_KEY nor OPENROUTER_API_KEY is configured. Generative AI endpoints will respond with 503.");
 }
 
 type GeminiJsonSchema = {
@@ -819,18 +819,6 @@ function getKitabEraSortValue(era: string) {
 
 kitabCatalog.sort((left, right) => getKitabEraSortValue(right.era) - getKitabEraSortValue(left.era));
 
-// Fallback response for Bahtsul Masail if Gemini is unconfigured or fails
-function getFallbackBahtsulMasail(query: string): any {
-  return {
-    judul: `Mas'alah: ${query}`,
-    status: "KHILAF (Perbedaan Pendapat)",
-    ringkasan: "Hukum dari perkara yang ditanyakan ini memiliki beberapa sudut pandang di kalangan ulama kontemporer dan klasik, dengan pendapat dominan menyesuaikan konteks maslahah (kemanfaatan umum).",
-    ibarat: "والأصل في الأشياء الإباحة حتى يدل الدليل على التحريم، وفي موضع الضرورة تباح المحظورات.",
-    rujukan: "Kaidah Fiqh Al-Asybah wan-Nadhair, Imam As-Suyuthi, Juz 1, Halaman 21",
-    ulasan: `Pertanyaan Anda mengenai "${query}" memerlukan tinjauan kontekstual. Para ulama mazhab Syafii mengedepankan prinsip kemudahan (at-taysir) dan penjagaan terhadap maslahat hamba (himayatul maslahati). Secara umum, jika perkara tersebut membawa kemanfaatan dan tidak menabrak dalil qath'iy (pasti), hukumnya berkisar antara Mubah (boleh) hingga Sunnah. Sebaliknya, bila melahirkan kerusakan (mafsadah) yang lebih besar bagi agama atau sosial, maka dilarang (Haram/Makruh) mengikuti kaidah 'Dar'ul mafasid muqaddamun 'ala jalbil mashalih' (Mencegah mafsadah lebih didahulukan daripada menarik maslahah).`
-  };
-}
-
 // Global Kamus Turath & Makna Jawa Pegon Pesantren
 interface KamusEntry {
   arti: string;
@@ -1487,99 +1475,28 @@ const kamusTurath: Record<string, KamusEntry> = {
   }
 };
 
-// Fallback helper for local dictionary search & offline translations
-function getFallbackKamusTranslate(query: string, mode: string = "auto"): any {
-  const cleanQ = query.trim().toLowerCase();
-  
-  // 1. Direct search in kamusTurath keys or values
-  const directKey = Object.keys(kamusTurath).find(k => k.toLowerCase() === cleanQ);
-  if (directKey) {
-    const item = kamusTurath[directKey];
-    if (mode === "terjemah") {
-      return {
-        kataAsal: directKey,
-        bahasaAsal: item.kategori === "pegon" ? "Jawa Pegon Pesantren" : "Bahasa Arab / istilah turath",
-        terjemahan: item.arti,
-        mode,
-        kategori: "Terjemahan langsung"
-      };
-    }
-    return {
-      kataAsal: directKey,
-      bahasaAsal: item.kategori === "pegon" ? "Jawa Pegon Pesantren (Makna Gandul)" : item.kategori === "arab" ? "Bahasa Arab Klasik (Turath)" : "Istilah Ushul / Fiqh",
-      terjemahan: item.arti,
-      mode,
-      padananArab: item.padananArab || "",
-      tarkibPegon: item.tarkib || "",
-      contohPenggunaan: item.contoh,
-      penjelasanMendalam: item.penjelasan,
-      kategori: item.kategori || "istilah"
-    };
-  }
-
-  // 2. Partial search
-  const partialKey = mode === "terjemah"
-    ? undefined
-    : Object.keys(kamusTurath).find(k => k.toLowerCase().includes(cleanQ) || cleanQ.includes(k.toLowerCase()));
-  if (partialKey) {
-    const item = kamusTurath[partialKey];
-    if (mode === "terjemah") {
-      return {
-        kataAsal: query,
-        bahasaAsal: item.kategori === "pegon" ? "Jawa Pegon Pesantren" : "Bahasa Arab / istilah turath",
-        terjemahan: item.arti,
-        mode,
-        kategori: "Terjemahan langsung"
-      };
-    }
-    return {
-      kataAsal: query,
-      bahasaAsal: item.kategori === "pegon" ? "Jawa Pegon Pesantren (Makna Gandul)" : "Bahasa Arab / Istilah",
-      terjemahan: item.arti,
-      mode,
-      padananArab: item.padananArab || "",
-      tarkibPegon: item.tarkib || "",
-      contohPenggunaan: item.contoh,
-      penjelasanMendalam: item.penjelasan,
-      kategori: item.kategori || "istilah"
-    };
-  }
-
-  // 3. Fallback heuristic for words like "nanging", "utawi", or Arabic
-  const isArabicScript = /[\u0600-\u06FF]/.test(query);
+// Hasil langsung dari kamusTurath untuk kata yang tersedia (tanpa generasi AI)
+function getDictionaryKamusResult(key: string, mode: string = "auto"): any {
+  const item = kamusTurath[key];
   if (mode === "terjemah") {
     return {
-      kataAsal: query,
-      bahasaAsal: isArabicScript ? "Bahasa Arab / teks turath" : "Jawa Pegon / transliterasi Arab",
-      terjemahan: "Terjemahan langsung belum tersedia untuk teks ini.",
+      kataAsal: key,
+      bahasaAsal: item.kategori === "pegon" ? "Jawa Pegon Pesantren" : "Bahasa Arab / istilah turath",
+      terjemahan: item.arti,
       mode,
       kategori: "Terjemahan langsung"
     };
   }
-  if (isArabicScript) {
-    return {
-      kataAsal: query,
-      bahasaAsal: "Bahasa Arab Klasik (Turath)",
-      terjemahan: `Terjemahan literal & kontekstual teks Arab: "${query}".`,
-      mode,
-      padananArab: query,
-      tarkibPegon: "Tarkib Arab Turath Pesantren",
-      contohPenggunaan: `Kutipan dalam bab kitab: "${query}"`,
-      penjelasanMendalam: `Lafaz Arab "${query}" merupakan kosa kata turath pesantren yang diterjemahkan ke dalam Bahasa Indonesia dengan menimbang keserasian siyaqul kalam (konteks kalimat) dalam kitab kuning.`,
-      kategori: "arab"
-    };
-  }
-
   return {
-    kataAsal: query,
-    bahasaAsal: mode === "pegon-indo" ? "Jawa Pegon Pesantren" : "Istilah Kebahasaan Pesantren",
-    terjemahan: `Terjemahan makna: "${query}" dalam tradisi telaah kitab santri.`,
+    kataAsal: key,
+    bahasaAsal: item.kategori === "pegon" ? "Jawa Pegon Pesantren (Makna Gandul)" : item.kategori === "arab" ? "Bahasa Arab Klasik (Turath)" : "Istilah Ushul / Fiqh",
+    terjemahan: item.arti,
     mode,
-    padananArab: "",
-    tarkibPegon: "Kaidah Tarkib / Leksikon Santri",
-    contohPenggunaan: `Contoh penerapan kata "${query}" dalam kajian bandongan santri.`,
-    penjelasanMendalam: `Kata "${query}" merupakan kosa kata penting dalam pengkajian naskah klasik turath dan pembacaan makna gandul kitab kuning. Santri memaknainya secara runtut untuk menangkap maksud mualif (pengarang kitab).`,
-    kategori: "pegon"
+    padananArab: item.padananArab || "",
+    tarkibPegon: item.tarkib || "",
+    contohPenggunaan: item.contoh,
+    penjelasanMendalam: item.penjelasan,
+    kategori: item.kategori || "istilah"
   };
 }
 
@@ -1646,16 +1563,6 @@ const PRESEEDED_BAHTSUL_MASAIL: Record<string, any> = {
   }
 };
 
-// Endpoint 1: Hello & Health
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", geminiConfigured: !!ai, timestamp: new Date() });
-});
-
-// Endpoint 2: Get Kitab Catalog
-app.get("/api/kitab", (req, res) => {
-  res.json(kitabCatalog);
-});
-
 // Helper to find pre-seeded ruling
 function findPreseededRuling(query: string): any | null {
   const q = query.toLowerCase();
@@ -1693,13 +1600,18 @@ app.post("/api/bahtsul-masail", async (req, res) => {
     return res.json(bahtsulMasailCache.get(cacheKey));
   }
 
-  // 2. Fallback offline: preseeded database or local simulation when the service is unavailable
+  // 2. Jawaban kurasi terverifikasi disajikan langsung (bukan fallback saat AI gagal)
+  const preseeded = findPreseededRuling(cleanQuery);
+  if (preseeded) {
+    bahtsulMasailCache.set(cacheKey, preseeded);
+    return res.json(preseeded);
+  }
+
+  // 3. Tanpa provider AI, kembalikan error yang jelas alih-alih jawaban buatan
   if (!ai && !openRouterApiKey) {
-    console.warn("No AI provider configured, returning local simulation response.");
-    const preseeded = findPreseededRuling(cleanQuery);
-    const fallback = preseeded || getFallbackBahtsulMasail(cleanQuery);
-    bahtsulMasailCache.set(cacheKey, fallback);
-    return res.json(fallback);
+    return res.status(503).json({
+      error: "Layanan analisis AI belum dikonfigurasi. Hubungi admin untuk mengaktifkan GEMINI_API_KEY atau OPENROUTER_API_KEY."
+    });
   }
 
   const prompt = `Analisis masalah (mas'alah) keagamaan berikut dengan teliti layaknya Lajnah Bahtsul Masa'il / Dewan Fatwa keagamaan tradisional Islam Nusantara (Pesantren):
@@ -1804,17 +1716,10 @@ app.post("/api/bahtsul-masail", async (req, res) => {
     return res.json(resultJson);
 
   } catch (error: any) {
-    console.warn("Bahtsul Masa'il delay/fallback triggered:", error?.status || error?.code || "", error?.message || error);
-    const preseeded = findPreseededRuling(cleanQuery);
-    if (preseeded) {
-      bahtsulMasailCache.set(cacheKey, preseeded);
-      return res.json(preseeded);
-    }
-    const fallbackResult = {
-      ...getFallbackBahtsulMasail(cleanQuery),
-      ulasan: `(Respon Fiqhiyyah Terbimbing) Terkait mas'alah "${cleanQuery}": Menurut kaidah madzhab Syafi'iyyah dan ulama pesantren, permasalahan hukum baru ditinjau melalui prinsip 'ilhaqul masa'il bin-nazha'ir' (menautkan masalah kontemporer dengan preseden klasik berdasar kesamaan 'illat hukum). Selama mendatangkan maslahah syar'iyyah dan tidak menabrak larangan qath'iy, hukum asalnya berada dalam koridor kebolehan (ibahah lil-hajah).`
-    };
-    return res.json(fallbackResult);
+    console.warn("Bahtsul Masa'il generation failed:", error?.status || error?.code || "", error?.message || error);
+    return res.status(502).json({
+      error: "Layanan AI sedang tidak dapat dihubungi. Silakan coba lagi beberapa saat lagi."
+    });
   }
 });
 
@@ -1837,7 +1742,7 @@ app.post("/api/kamus/translate", async (req, res) => {
   // 1. Direct authoritative match in local kamusTurath (Instant 0ms lookup)
   const directKey = Object.keys(kamusTurath).find(k => k.toLowerCase() === lowerQuery);
   if (directKey) {
-    return res.json(getFallbackKamusTranslate(directKey, mode));
+    return res.json(getDictionaryKamusResult(directKey, mode));
   }
 
   // 2. Check in-memory translation cache
@@ -1846,11 +1751,11 @@ app.post("/api/kamus/translate", async (req, res) => {
     return res.json(kamusCache.get(cacheKey));
   }
 
-  // 3. Fallback if no AI provider is configured
+  // 3. Tanpa provider AI, hanya entri kamus yang tersedia yang bisa dilayani
   if (!ai && !openRouterApiKey) {
-    console.warn("No AI provider configured, returning local dictionary result.");
-    const fallback = getFallbackKamusTranslate(cleanQuery, mode);
-    return res.json(fallback);
+    return res.status(503).json({
+      error: "Layanan terjemahan AI belum dikonfigurasi. Hubungi admin untuk mengaktifkan GEMINI_API_KEY atau OPENROUTER_API_KEY."
+    });
   }
 
   const prompt = mode === "terjemah"
@@ -1949,9 +1854,10 @@ PANDUAN:
     return res.json(resultJson);
 
   } catch (error: any) {
-    console.warn("Generation timed out or failed, serving fast fallback:", error?.status || error?.code || "", error?.message || error);
-    const fallback = getFallbackKamusTranslate(cleanQuery, mode);
-    return res.json(fallback);
+    console.warn("Kamus translation failed:", error?.status || error?.code || "", error?.message || error);
+    return res.status(502).json({
+      error: "Layanan AI sedang tidak dapat dihubungi. Silakan coba lagi beberapa saat lagi."
+    });
   }
 });
 
@@ -2022,13 +1928,8 @@ app.post("/api/chat-kitab", async (req, res) => {
     : `Kitab: "${kitabTitle}" (klasik Turath).`;
 
   if (!ai && !openRouterApiKey) {
-    if (images.length > 0) {
-      return res.status(503).json({ error: "Analisis gambar belum tersedia karena layanan AI belum dikonfigurasi." });
-    }
-    console.warn("No AI provider configured. Returning static dialogue companion.");
-    return res.json({
-      role: "model",
-      content: `Sebagai asisten Kitab ${kitabTitle || 'Turath'}, saya ingin mengabarkan bahwa saat ini integrasi layanan belum aktif sepenuhnya. Namun berdasarkan ringkasan, Kitab ${kitabTitle} mengajarkan kemuliaan nilai akhlak, kepatuhan ibadah, dan kedisiplinan ilmu. Tanyakan hal yang spesifik, dan saya akan berusaha memberi bantuan literasi klasiknya!`
+    return res.status(503).json({
+      error: "Layanan kajian AI belum dikonfigurasi. Hubungi admin untuk mengaktifkan GEMINI_API_KEY atau OPENROUTER_API_KEY."
     });
   }
 
@@ -2186,14 +2087,12 @@ app.post("/api/chat-kitab", async (req, res) => {
       dalil
     });
   } catch (error: any) {
-    console.warn("Gagal mengobrol dengan kitab, serving resilient study guidance:", error?.status || error?.code || "", error?.message || error);
+    console.warn("Chat kitab generation failed:", error?.status || error?.code || "", error?.message || error);
     if (images.length > 0) {
       return res.status(502).json({ error: "Analisis gambar gagal. Periksa keterbacaan gambar lalu coba lagi." });
     }
-    const gentleStudyFallback = `Santri yang dirahmati Allah, mengenai pertanyaanmu tentang hal tersebut dalam Kitab ${selectedKitab?.title || kitabTitle || 'Turath'}: Mualif (${selectedKitab?.author || 'ulama salaf'}) senantiasa mengingatkan kita untuk mendahulukan thaharah batin dan kepatuhan syariat. Setiap bab dalam kitab ini mengajarkan bahwa ilmu yang berkah adalah ilmu yang diamalkan dengan penuh keikhlasan dan ketenangan hati. Teruslah istiqamah dalam muthala'ah naskah turath ini.`;
-    return res.json({
-      role: "model",
-      content: gentleStudyFallback
+    return res.status(502).json({
+      error: "Layanan AI sedang tidak dapat dihubungi. Silakan coba lagi beberapa saat lagi."
     });
   }
 });
@@ -2307,4 +2206,29 @@ app.post("/api/voice/speak", async (req, res) => {
       error: timedOut ? "Pembuatan suara melewati batas waktu. Silakan coba lagi." : "Suara manusia belum berhasil dibuat. Silakan coba lagi."
     });
   }
+});
+
+// Endpoint API yang tidak dikenal dibalas JSON agar klien tetap menerima pesan
+app.use("/api", (_req, res) => {
+  res.status(404).json({ error: "Endpoint API tidak ditemukan." });
+});
+
+// Semua error API (body tidak valid, terlalu besar, dsb.) dikembalikan sebagai JSON
+app.use((error: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (res.headersSent) return next(error);
+
+  if (error?.type === "entity.parse.failed") {
+    return res.status(400).json({ error: "Body JSON tidak valid." });
+  }
+  if (error?.type === "entity.too.large") {
+    return res.status(413).json({ error: "Ukuran permintaan melebihi batas 4 MB." });
+  }
+
+  const status = Number(error?.status ?? error?.statusCode);
+  if (Number.isInteger(status) && status >= 400 && status < 500) {
+    return res.status(status).json({ error: "Permintaan tidak valid." });
+  }
+
+  console.error("Unhandled API error:", error);
+  return res.status(500).json({ error: "Terjadi kesalahan internal pada server." });
 });

@@ -525,6 +525,7 @@ export default function App() {
   const [bookCategoryFilter, setBookCategoryFilter] = useState<string>("semua");
   const [selectedKitabId, setSelectedKitabId] = useState<string | null>(null);
   const [isLibLoading, setIsLibLoading] = useState(true);
+  const [libError, setLibError] = useState<string | null>(null);
   
   // Specific Kitab Chat state
   const [kitabMessages, setKitabMessages] = useState<ChatMessage[]>([]);
@@ -553,6 +554,7 @@ export default function App() {
   const [isKamusLoading, setIsKamusLoading] = useState(true);
   const [isExplainingTerm, setIsExplainingTerm] = useState(false);
   const [kamusResponse, setKamusResponse] = useState<KamusTranslateResult | null>(null);
+  const [kamusError, setKamusError] = useState<string | null>(null);
   const [translateCopySuccess, setTranslateCopySuccess] = useState(false);
 
   // Tab 4: Bookmarked Rulings ledger
@@ -813,15 +815,18 @@ export default function App() {
   const fetchKitabCatalog = async () => {
     try {
       setIsLibLoading(true);
+      setLibError(null);
       const res = await fetch("/api/kitab");
-      const data = await res.json();
+      const data = await readJsonResponse<any[]>(res);
+      if (!Array.isArray(data)) throw new Error("Format katalog kitab tidak valid.");
       setBooks(data);
       // Select first kitab by default
-      if (data && data.length > 0) {
+      if (data.length > 0) {
         setSelectedKitabId(data[0].id);
       }
     } catch (e) {
       console.error("Gagal memuat catalog kitab:", e);
+      setLibError(e instanceof Error ? e.message : "Gagal memuat katalog kitab.");
     } finally {
       setIsLibLoading(false);
     }
@@ -831,7 +836,10 @@ export default function App() {
     try {
       setIsKamusLoading(true);
       const res = await fetch("/api/kamus");
-      const data = await res.json();
+      const data = await readJsonResponse<Record<string, KamusEntryData>>(res);
+      if (!data || typeof data !== "object" || Array.isArray(data)) {
+        throw new Error("Format kamus tidak valid.");
+      }
       setKamus(data);
     } catch (e) {
       console.error("Gagal memuat kamus:", e);
@@ -911,21 +919,16 @@ export default function App() {
       }, 150);
     } catch (error: any) {
       clearTimeout(timeoutId);
-      console.warn("Issue solving delayed or caught fallback:", error);
-      // Fast high-quality resilient fallback directly in client
-      setBmResult({
-        judul: `Mas'alah: ${finalQuery}`,
-        status: "Tafshil / Khilaf Menurut Madzhab",
-        ringkasan: `Kajian fiqh terkait "${finalQuery}" ditimbang berdasarkan kemaslahatan umat dan 'illat hukum madzhab salaf. Boleh diamalkan selama tidak melanggar ketentuan qath'iy syariat.`,
-        ibarat: "وَالأَصْلُ فِي الأَشْيَاءِ الإِبَاحَةُ حَتَّى يَدُلَّ الدَّلِيلُ عَلَى التَّحْرِيمِ، وَدَرْءُ الْمَفَاسِدِ مُقَدَّمٌ عَلَى جَلْبِ الْمَصَالِحِ.",
-        rujukan: "Kaidah Fiqhiyyah Al-Asybah wan-Nazha'ir, Imam As-Suyuthi & Syarah Fathul Mu'in",
-        ulasan: `Para ulama madzhab Syafi'i menegaskan bahwa dalam menghadapi persoalan kontemporer, prinsip kehati-hatian (ihtiyath) dan penyesuaian maslahah mursalah menjadi pedoman utama majelis Bahtsul Masa'il agar tidak memberatkan (raf'ul haraj) bagi umat Islam.`
-      });
-      setTimeout(() => {
-        if (window.innerWidth < 1024) {
-          document.getElementById("resolusi-dokumen")?.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
-      }, 150);
+      console.warn("Bahtsul Masa'il request failed:", error);
+      setFormError(
+        error?.name === "AbortError"
+          ? "Permintaan AI melebihi batas waktu. Silakan coba lagi."
+          : error instanceof TypeError
+            ? "Tidak dapat terhubung ke server. Periksa koneksi Anda lalu coba lagi."
+            : error instanceof Error && error.message
+              ? error.message
+              : "Gagal memproses mas'alah. Silakan coba lagi."
+      );
     } finally {
       setIsSolving(false);
     }
@@ -1105,6 +1108,8 @@ export default function App() {
     const query = (termToExplain || customTerm).trim();
     if (!query) return;
 
+    setKamusError(null);
+
     // 1. Check if query directly or partially exists in local authoritative dictionary (Instant 0ms lookup)
     const activeMode = modeOverride || translateMode;
     const lowerQ = query.toLowerCase();
@@ -1161,27 +1166,18 @@ export default function App() {
           el.scrollIntoView({ behavior: "smooth", block: "nearest" });
         }
       }, 50);
-    } catch (error) {
-      console.warn("Kamus translation timeout/error, using safe instant fallback:", error);
-      // Safe instant scholarly fallback so user never gets stuck loading
-      const isArab = /[\u0600-\u06FF]/.test(query);
-      setKamusResponse({
-        kataAsal: query,
-        bahasaAsal: isArab ? "Bahasa Arab Klasik (Turath)" : activeMode === "pegon-indo" ? "Jawa Pegon Pesantren" : "Istilah Turath Pesantren",
-        terjemahan: activeMode === "terjemah" ? "Terjemahan langsung belum tersedia. Periksa koneksi lalu coba lagi." : `Terjemahan & ulasan makna: "${query}"`,
-        mode: activeMode,
-        padananArab: activeMode === "terjemah" ? undefined : isArab ? query : "",
-        tarkibPegon: activeMode === "terjemah" ? undefined : "Kaidah Tarkib Tradisi Santri Salaf",
-        contohPenggunaan: activeMode === "terjemah" ? undefined : `Kutipan pemakaian kata "${query}" dalam kajian bandongan kitab kuning.`,
-        penjelasanMendalam: activeMode === "terjemah" ? undefined : `Kata "${query}" merupakan kosa kata penting dalam pengkajian naskah klasik pesantren. Santri memaknainya secara tertib mengacu pada kedudukan tarkib dan maksud musannif (pengarang kitab).`,
-        kategori: activeMode === "terjemah" ? "Terjemahan langsung" : isArab ? "arab" : activeMode === "pegon-indo" ? "pegon" : "istilah"
-      });
-      setTimeout(() => {
-        const el = document.getElementById("hasil-terjemah-kamus");
-        if (el) {
-          el.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        }
-      }, 50);
+    } catch (error: any) {
+      console.warn("Kamus translation request failed:", error);
+      setKamusResponse(null);
+      setKamusError(
+        error?.name === "AbortError"
+          ? "Permintaan terjemahan melebihi batas waktu. Silakan coba lagi."
+          : error instanceof TypeError
+            ? "Tidak dapat terhubung ke server. Periksa koneksi Anda lalu coba lagi."
+            : error instanceof Error && error.message
+              ? error.message
+              : "Gagal menerjemahkan teks. Silakan coba lagi."
+      );
     } finally {
       clearTimeout(timer);
       setIsExplainingTerm(false);
@@ -1929,6 +1925,18 @@ export default function App() {
                     <Loader2 className="w-6 h-6 animate-spin mx-auto text-gold-heritage" />
                     <p className="text-xs font-mono mt-2">Membuka lemari syarah kitab...</p>
                   </div>
+                ) : libError ? (
+                  <div className="p-6 text-center border border-amber-300 bg-amber-50 rounded-lg" role="alert">
+                    <AlertCircle className="w-5 h-5 mx-auto mb-1 text-amber-700" />
+                    <p className="text-xs text-amber-950">{libError}</p>
+                    <button
+                      type="button"
+                      onClick={() => void fetchKitabCatalog()}
+                      className="mt-3 text-xs font-bold text-emerald-deep underline"
+                    >
+                      Coba lagi
+                    </button>
+                  </div>
                 ) : filteredBooks.length === 0 ? (
                   <div className="p-8 text-center text-stone-400 border border-dashed rounded-lg">
                     <AlertCircle className="w-5 h-5 mx-auto mb-1 text-stone-400" />
@@ -2538,7 +2546,10 @@ export default function App() {
                         type="text"
                         dir="auto"
                         value={customTerm}
-                        onChange={(e) => setCustomTerm(e.target.value)}
+                        onChange={(e) => {
+                          setCustomTerm(e.target.value);
+                          if (kamusError) setKamusError(null);
+                        }}
                         placeholder={
                           translateMode === "pegon-indo"
                             ? "Ketik makna pegon (contoh: nanging, utawi, hale, ora kena ora)..."
@@ -2607,6 +2618,15 @@ export default function App() {
                   </button>
                 </form>
               </div>
+
+              {kamusError && !isExplainingTerm && (
+                <div className="p-4 bg-white border border-amber-300 rounded-2xl shadow-sm" role="alert">
+                  <div className="flex items-start gap-2 text-sm text-amber-950">
+                    <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-amber-700" />
+                    <p>{kamusError}</p>
+                  </div>
+                </div>
+              )}
 
               {/* Translation Loading State */}
               {isExplainingTerm && (
