@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 dotenv.config();
 
@@ -11,7 +11,66 @@ const app = express();
 export default app;
 const AI_MODEL = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
 const AI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS) || 90000;
+const AI_ATTEMPT_TIMEOUT_MS = Math.min(
+  Number(process.env.AI_ATTEMPT_TIMEOUT_MS) || 60000,
+  AI_TIMEOUT_MS
+);
+const AI_RETRY_MAX_ATTEMPTS = Math.min(Math.max(Number(process.env.AI_RETRY_MAX_ATTEMPTS) || 3, 1), 5);
+const AI_RETRY_BASE_DELAY_MS = Math.min(Math.max(Number(process.env.AI_RETRY_BASE_DELAY_MS) || 800, 100), 5000);
+const AI_MIN_RETRY_BUDGET_MS = 5000;
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
+
+type LogFields = Record<string, string | number | boolean | undefined>;
+
+// Log JSON satu baris agar mudah diparse dan tidak memuat isi prompt/kredensial
+function logEvent(level: "info" | "warn" | "error", event: string, fields: LogFields = {}) {
+  const entry: LogFields = { ts: new Date().toISOString(), level, event };
+  for (const [key, value] of Object.entries(fields)) {
+    if (value !== undefined) entry[key] = value;
+  }
+  const line = JSON.stringify(entry);
+  if (level === "error") console.error(line);
+  else if (level === "warn") console.warn(line);
+  else console.log(line);
+}
+
+function truncateForLog(value: unknown, maxLength = 300): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const text = typeof value === "string" ? value : String(value);
+  return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
+}
+
+function getErrorStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const failure = error as { status?: number | string; statusCode?: number | string; code?: number | string };
+  const status = Number(failure.status ?? failure.statusCode ?? failure.code);
+  return Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined;
+}
+
+function isAbortLikeError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const name = (error as { name?: string }).name;
+  return name === "AbortError" || name === "TimeoutError";
+}
+
+function isTimeoutLikeError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const failure = error as { name?: string; message?: string };
+  return failure.name === "TimeoutError" || /timeout|timed out/i.test(failure.message || "");
+}
+
+function createClientAbortSignal(res: express.Response): AbortSignal {
+  const controller = new AbortController();
+  res.on("close", () => {
+    // Koneksi tertutup sebelum respons selesai berarti klien membatalkan permintaan
+    if (!res.writableEnded) controller.abort(new Error("Client disconnected."));
+  });
+  return controller.signal;
+}
+
+function getRequestId(res: express.Response): string {
+  return typeof res.locals.requestId === "string" ? res.locals.requestId : "unknown";
+}
 
 // Di belakang proxy (mis. Vercel), IP asli dibaca dari X-Forwarded-For agar rate limit akurat
 if (IS_PRODUCTION || process.env.VERCEL) {
@@ -47,6 +106,31 @@ app.use(helmet({
   strictTransportSecurity: IS_PRODUCTION ? { maxAge: 15552000, includeSubDomains: true } : false,
   referrerPolicy: { policy: "strict-origin-when-cross-origin" }
 }));
+
+// requestId dipakai untuk korelasi log antar-middleware dan penyedia AI
+app.use((req, res, next) => {
+  const incomingId = req.get("x-request-id");
+  const requestId = incomingId && /^[A-Za-z0-9._-]{8,128}$/.test(incomingId)
+    ? incomingId
+    : randomUUID();
+  res.locals.requestId = requestId;
+  res.setHeader("x-request-id", requestId);
+
+  const isApiRequest = req.path === "/api" || req.path.startsWith("/api/");
+  if (isApiRequest) {
+    const startedAt = Date.now();
+    res.on("finish", () => {
+      logEvent("info", "http_request", {
+        requestId,
+        method: req.method,
+        path: req.path,
+        status: res.statusCode,
+        durationMs: Date.now() - startedAt
+      });
+    });
+  }
+  next();
+});
 
 // Login memakai batas body kecil; parser pertama yang berjalan menangani request
 app.use("/api/auth", express.json({ limit: "8kb" }));
@@ -215,16 +299,21 @@ app.use("/api", (req, res, next) => {
 const geminiApiKey = process.env.GEMINI_API_KEY;
 const openRouterApiKey = process.env.OPENROUTER_API_KEY?.trim();
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openrouter/auto";
+const OPENROUTER_BASE_URL = (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/+$/, "");
 const OPENROUTER_MAX_OUTPUT_TOKENS = 1800;
 let ai: GoogleGenAI | null = null;
 
 if (geminiApiKey) {
+  const geminiBaseUrl = process.env.GEMINI_BASE_URL?.trim();
   ai = new GoogleGenAI({
     apiKey: geminiApiKey,
     httpOptions: {
+      ...(geminiBaseUrl ? { baseUrl: geminiBaseUrl } : {}),
       headers: {
         'User-Agent': 'aistudio-build',
-      }
+      },
+      // Retry ditangani runProviderWithRetry agar backoff, logging, dan failover konsisten
+      retryOptions: { attempts: 1 }
     }
   });
 } else {
@@ -253,12 +342,167 @@ type OpenRouterContentPart =
   | { type: "text"; text: string }
   | { type: "image_url"; image_url: { url: string; detail: "auto" } };
 
-function isRetryableGeminiFailure(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const failure = error as { status?: number | string; code?: number | string; message?: string };
-  const status = Number(failure.status ?? failure.code);
-  return [408, 429, 500, 502, 503, 504].includes(status)
-    || /timeout|timed out|fetch failed|network|econnreset|etimedout|eai_again/i.test(failure.message || "");
+type AiUsage = {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  costUsd?: number;
+  model?: string;
+};
+
+type GeminiCallResult = {
+  text?: string | null;
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    totalTokenCount?: number;
+  } | null;
+};
+
+function createProviderError(message: string, status?: number): Error {
+  const error = new Error(message) as Error & { status?: number };
+  if (status !== undefined) error.status = status;
+  return error;
+}
+
+function isRetryableProviderFailure(error: unknown): boolean {
+  if (isAbortLikeError(error)) return true;
+  const status = getErrorStatus(error);
+  if (status !== undefined) return [408, 425, 429, 500, 502, 503, 504].includes(status);
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (/Retryable HTTP Error/i.test(message)) return true;
+  if (/Non-retryable exception/i.test(message)) return false;
+  return /timeout|timed out|fetch failed|network|econnreset|econnrefused|etimedout|eai_again|socket hang up|temporarily unavailable/i.test(message);
+}
+
+class ProviderTimeoutError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "TimeoutError";
+  }
+}
+
+function sleepWithAbort(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason ?? new Error("Request aborted."));
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason ?? new Error("Request aborted."));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function getRetryDelayMs(attempt: number): number {
+  const ceiling = Math.min(AI_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1), 5000);
+  return Math.round(ceiling * (0.75 + Math.random() * 0.5));
+}
+
+function toTokenCount(value: unknown): number | undefined {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function logAiUsage(params: {
+  provider: "gemini" | "openrouter";
+  operation: string;
+  requestId?: string;
+  usage?: AiUsage;
+}) {
+  if (!params.usage) return;
+  logEvent("info", "ai_usage", {
+    requestId: params.requestId,
+    operation: params.operation,
+    provider: params.provider,
+    model: params.usage.model,
+    promptTokens: params.usage.promptTokens,
+    completionTokens: params.usage.completionTokens,
+    totalTokens: params.usage.totalTokens,
+    costUsd: params.usage.costUsd
+  });
+}
+
+async function runProviderWithRetry<T>(params: {
+  provider: "gemini" | "openrouter";
+  operation: string;
+  requestId?: string;
+  overallSignal: AbortSignal;
+  deadlineAt: number;
+  call: (signal: AbortSignal) => Promise<T>;
+}): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= AI_RETRY_MAX_ATTEMPTS; attempt += 1) {
+    if (params.overallSignal.aborted) {
+      throw params.overallSignal.reason ?? new Error("AI request aborted.");
+    }
+    const attemptController = new AbortController();
+    let attemptTimedOut = false;
+    const attemptTimer = setTimeout(() => {
+      attemptTimedOut = true;
+      attemptController.abort(new ProviderTimeoutError(`Provider request timed out after ${AI_ATTEMPT_TIMEOUT_MS}ms`));
+    }, AI_ATTEMPT_TIMEOUT_MS);
+    const attemptSignal = AbortSignal.any([params.overallSignal, attemptController.signal]);
+    const startedAt = Date.now();
+    logEvent("info", "ai_provider_attempt", {
+      requestId: params.requestId,
+      operation: params.operation,
+      provider: params.provider,
+      attempt,
+      maxAttempts: AI_RETRY_MAX_ATTEMPTS
+    });
+    try {
+      const result = await params.call(attemptSignal);
+      logEvent("info", "ai_provider_success", {
+        requestId: params.requestId,
+        operation: params.operation,
+        provider: params.provider,
+        attempt,
+        durationMs: Date.now() - startedAt
+      });
+      return result;
+    } catch (error) {
+      const failure = params.overallSignal.aborted
+        ? (params.overallSignal.reason ?? error)
+        : attemptTimedOut
+          ? new ProviderTimeoutError(`Provider request timed out after ${AI_ATTEMPT_TIMEOUT_MS}ms`, { cause: error })
+          : error;
+      lastError = failure;
+      const retryable = isRetryableProviderFailure(failure);
+      logEvent("warn", "ai_provider_error", {
+        requestId: params.requestId,
+        operation: params.operation,
+        provider: params.provider,
+        attempt,
+        status: getErrorStatus(failure),
+        retryable,
+        aborted: params.overallSignal.aborted,
+        message: truncateForLog(failure instanceof Error ? failure.message : failure)
+      });
+      const remainingMs = params.deadlineAt - Date.now();
+      if (params.overallSignal.aborted || !retryable || attempt >= AI_RETRY_MAX_ATTEMPTS || remainingMs <= AI_MIN_RETRY_BUDGET_MS) {
+        break;
+      }
+      const waitMs = Math.min(getRetryDelayMs(attempt), remainingMs - 1000);
+      logEvent("info", "ai_provider_retry_scheduled", {
+        requestId: params.requestId,
+        operation: params.operation,
+        provider: params.provider,
+        nextAttempt: attempt + 1,
+        delayMs: waitMs
+      });
+      await sleepWithAbort(waitMs, params.overallSignal);
+    } finally {
+      clearTimeout(attemptTimer);
+    }
+  }
+  throw lastError;
 }
 
 function toOpenRouterSchema(schema: GeminiJsonSchema): Record<string, unknown> {
@@ -288,38 +532,14 @@ function toOpenRouterContent(contents: string | GeminiUserContent): string | Ope
   ));
 }
 
-async function generateJsonWithProviderFallback(options: {
+async function callOpenRouterJson(params: {
   systemInstruction: string;
   fallbackInstructions?: string;
   responseSchema: GeminiJsonSchema;
   userContent: string | GeminiUserContent;
-  generateGemini?: () => Promise<{ text?: string | null }>;
-}): Promise<string> {
-  if (options.generateGemini) {
-    try {
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
-      const response = await Promise.race([
-        options.generateGemini(),
-        new Promise<never>((_, reject) => {
-          timeoutId = setTimeout(() => reject(new Error(`Generation timeout exceeded ${AI_TIMEOUT_MS / 1000}s`)), AI_TIMEOUT_MS);
-        })
-      ]).finally(() => {
-        if (timeoutId) clearTimeout(timeoutId);
-      });
-      if (!response.text) throw new Error("Respon kosong dari model Gemini.");
-      return response.text;
-    } catch (error) {
-      if (!openRouterApiKey || !isRetryableGeminiFailure(error)) throw error;
-      const failure = error as { status?: number | string; code?: number | string };
-      console.warn("Gemini is temporarily unavailable; trying OpenRouter.", failure.status || failure.code || "");
-    }
-  }
-
-  if (!openRouterApiKey) {
-    throw new Error("Layanan AI cadangan belum dikonfigurasi. Isi OPENROUTER_API_KEY untuk mengaktifkan fallback.");
-  }
-
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+  signal: AbortSignal;
+}): Promise<{ text: string; usage?: AiUsage }> {
+  const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${openRouterApiKey}`,
@@ -327,25 +547,26 @@ async function generateJsonWithProviderFallback(options: {
       "HTTP-Referer": "https://kharismaai.vercel.app",
       "X-Title": "Kharisma Pedia"
     },
-    signal: AbortSignal.timeout(AI_TIMEOUT_MS),
+    signal: params.signal,
     body: JSON.stringify({
       model: OPENROUTER_MODEL,
       max_tokens: OPENROUTER_MAX_OUTPUT_TOKENS,
       messages: [
         {
           role: "system",
-          content: `${options.systemInstruction}\n\n${options.fallbackInstructions || ""}\nKembalikan hanya JSON yang sesuai dengan JSON Schema berikut dan pastikan JSON lengkap:\n${JSON.stringify(toOpenRouterSchema(options.responseSchema))}`
+          content: `${params.systemInstruction}\n\n${params.fallbackInstructions || ""}\nKembalikan hanya JSON yang sesuai dengan JSON Schema berikut dan pastikan JSON lengkap:\n${JSON.stringify(toOpenRouterSchema(params.responseSchema))}`
         },
-        { role: "user", content: toOpenRouterContent(options.userContent) }
+        { role: "user", content: toOpenRouterContent(params.userContent) }
       ],
       response_format: {
         type: "json_schema",
         json_schema: {
           name: "kharisma_response",
           strict: true,
-          schema: toOpenRouterSchema(options.responseSchema)
+          schema: toOpenRouterSchema(params.responseSchema)
         }
       },
+      usage: { include: true },
       ...(OPENROUTER_MODEL === "openrouter/auto"
         ? { plugins: [{ id: "auto-router", cost_tier: "low" }] }
         : {}),
@@ -353,26 +574,133 @@ async function generateJsonWithProviderFallback(options: {
     })
   });
 
-  const result = await response.json() as {
-    error?: { message?: string };
-    choices?: Array<{
-      finish_reason?: string;
-      message?: { content?: string | Array<{ type?: string; text?: string }> };
-    }>;
-  };
-  if (!response.ok) {
-    throw new Error(`OpenRouter request failed (${response.status}): ${result.error?.message || "unknown error"}`);
+  // Body dibaca sebagai teks lalu diparse agar halaman error non-JSON tetap menghasilkan pesan jelas
+  const rawBody = await response.text();
+  let result: any;
+  try {
+    result = rawBody ? JSON.parse(rawBody) : undefined;
+  } catch {
+    result = undefined;
   }
+
+  if (!response.ok) {
+    throw createProviderError(
+      `OpenRouter request failed (${response.status}): ${result?.error?.message || truncateForLog(rawBody, 200) || "unknown error"}`,
+      response.status
+    );
+  }
+  if (!result) {
+    throw createProviderError("OpenRouter returned an unreadable response.", response.status);
+  }
+
   const choice = result.choices?.[0];
   if (choice?.finish_reason === "length") {
-    throw new Error(`OpenRouter response reached the ${OPENROUTER_MAX_OUTPUT_TOKENS}-token limit before completing its JSON.`);
+    throw createProviderError(`OpenRouter response reached the ${OPENROUTER_MAX_OUTPUT_TOKENS}-token limit before completing its JSON.`);
   }
   const content = choice?.message?.content;
   const text = typeof content === "string"
     ? content
-    : content?.filter((part) => part.type === "text").map((part) => part.text || "").join("");
-  if (!text?.trim()) throw new Error("OpenRouter returned an empty response.");
-  return text;
+    : content?.filter((part: { type?: string }) => part.type === "text").map((part: { text?: string }) => part.text || "").join("");
+  if (!text?.trim()) throw createProviderError("OpenRouter returned an empty response.");
+
+  const usedModel = typeof result.model === "string" ? result.model : OPENROUTER_MODEL;
+  const usage = result.usage && typeof result.usage === "object"
+    ? {
+        model: usedModel,
+        promptTokens: toTokenCount(result.usage.prompt_tokens),
+        completionTokens: toTokenCount(result.usage.completion_tokens),
+        totalTokens: toTokenCount(result.usage.total_tokens),
+        costUsd: typeof result.usage.cost === "number" ? result.usage.cost : undefined
+      }
+    : { model: usedModel };
+
+  return { text, usage };
+}
+
+async function generateJsonWithProviderFallback(options: {
+  systemInstruction: string;
+  fallbackInstructions?: string;
+  responseSchema: GeminiJsonSchema;
+  userContent: string | GeminiUserContent;
+  operation?: string;
+  requestId?: string;
+  signal?: AbortSignal;
+  generateGemini?: (signal: AbortSignal) => Promise<GeminiCallResult>;
+}): Promise<string> {
+  const operation = options.operation || "ai_generation";
+  const deadlineAt = Date.now() + AI_TIMEOUT_MS;
+  const deadlineSignal = AbortSignal.timeout(AI_TIMEOUT_MS);
+  const overallSignal = options.signal
+    ? AbortSignal.any([options.signal, deadlineSignal])
+    : deadlineSignal;
+
+  let geminiError: unknown;
+  if (options.generateGemini) {
+    try {
+      const response = await runProviderWithRetry({
+        provider: "gemini",
+        operation,
+        requestId: options.requestId,
+        overallSignal,
+        deadlineAt,
+        call: options.generateGemini
+      });
+      if (!response.text) throw createProviderError("Respon kosong dari model Gemini.");
+      logAiUsage({
+        provider: "gemini",
+        operation,
+        requestId: options.requestId,
+        usage: response.usageMetadata
+          ? {
+              model: AI_MODEL,
+              promptTokens: response.usageMetadata.promptTokenCount,
+              completionTokens: response.usageMetadata.candidatesTokenCount,
+              totalTokens: response.usageMetadata.totalTokenCount
+            }
+          : { model: AI_MODEL }
+      });
+      return response.text;
+    } catch (error) {
+      geminiError = error;
+      if (overallSignal.aborted || !openRouterApiKey || !isRetryableProviderFailure(error)) {
+        throw error;
+      }
+      logEvent("warn", "ai_provider_failover", {
+        requestId: options.requestId,
+        operation,
+        from: "gemini",
+        to: "openrouter",
+        status: getErrorStatus(error)
+      });
+    }
+  }
+
+  if (!openRouterApiKey) {
+    if (geminiError) throw geminiError;
+    throw createProviderError("Layanan AI cadangan belum dikonfigurasi. Isi OPENROUTER_API_KEY untuk mengaktifkan fallback.");
+  }
+
+  const result = await runProviderWithRetry({
+    provider: "openrouter",
+    operation,
+    requestId: options.requestId,
+    overallSignal,
+    deadlineAt,
+    call: (signal) => callOpenRouterJson({
+      systemInstruction: options.systemInstruction,
+      fallbackInstructions: options.fallbackInstructions,
+      responseSchema: options.responseSchema,
+      userContent: options.userContent,
+      signal
+    })
+  });
+  logAiUsage({
+    provider: "openrouter",
+    operation,
+    requestId: options.requestId,
+    usage: result.usage
+  });
+  return result.text;
 }
 
 // ---------------------------------------------------------
@@ -1787,20 +2115,39 @@ app.post("/api/bahtsul-masail", aiRateLimiter, async (req, res) => {
       }
   };
   const gemini = ai;
+  const requestId = getRequestId(res);
+  const clientSignal = createClientAbortSignal(res);
   try {
     const textOutput = await generateJsonWithProviderFallback({
       systemInstruction: generationRequest.config.systemInstruction,
       fallbackInstructions: "Untuk menjaga jawaban tetap lengkap dalam batas token, tulis ulasan maksimal 3 kalimat dan tampilkan paling banyak 2 pendapat khilaf yang benar-benar relevan. Ringkaskan setiap kutipan dan rujukan; jangan menambah pengantar atau mengarang sumber.",
       responseSchema: generationRequest.config.responseSchema,
       userContent: prompt,
-      generateGemini: gemini ? () => gemini.models.generateContent(generationRequest) : undefined
+      operation: "bahtsul_masail",
+      requestId,
+      signal: clientSignal,
+      generateGemini: gemini ? (signal) => gemini.models.generateContent({
+        ...generationRequest,
+        config: { ...generationRequest.config, abortSignal: signal }
+      }) : undefined
     });
     const resultJson = JSON.parse(textOutput.trim());
     bahtsulMasailCache.set(cacheKey, resultJson);
     return res.json(resultJson);
 
   } catch (error: any) {
-    console.warn("Bahtsul Masa'il generation failed:", error?.status || error?.code || "", error?.message || error);
+    logEvent("warn", "ai_endpoint_error", {
+      requestId,
+      endpoint: "bahtsul_masail",
+      status: getErrorStatus(error),
+      timedOut: isTimeoutLikeError(error),
+      message: truncateForLog(error?.message || error)
+    });
+    if (isTimeoutLikeError(error)) {
+      return res.status(504).json({
+        error: "Layanan AI tidak merespons dalam batas waktu. Silakan coba lagi."
+      });
+    }
     return res.status(502).json({
       error: "Layanan AI sedang tidak dapat dihubungi. Silakan coba lagi beberapa saat lagi."
     });
@@ -1925,12 +2272,20 @@ PANDUAN:
       }
   };
   const gemini = ai;
+  const requestId = getRequestId(res);
+  const clientSignal = createClientAbortSignal(res);
   try {
     const textOutput = await generateJsonWithProviderFallback({
       systemInstruction,
       responseSchema,
       userContent: prompt,
-      generateGemini: gemini ? () => gemini.models.generateContent(generationRequest) : undefined
+      operation: "kamus_translate",
+      requestId,
+      signal: clientSignal,
+      generateGemini: gemini ? (signal) => gemini.models.generateContent({
+        ...generationRequest,
+        config: { ...generationRequest.config, abortSignal: signal }
+      }) : undefined
     });
     const resultJson = JSON.parse(textOutput.trim());
     resultJson.mode = mode;
@@ -1945,7 +2300,18 @@ PANDUAN:
     return res.json(resultJson);
 
   } catch (error: any) {
-    console.warn("Kamus translation failed:", error?.status || error?.code || "", error?.message || error);
+    logEvent("warn", "ai_endpoint_error", {
+      requestId,
+      endpoint: "kamus_translate",
+      status: getErrorStatus(error),
+      timedOut: isTimeoutLikeError(error),
+      message: truncateForLog(error?.message || error)
+    });
+    if (isTimeoutLikeError(error)) {
+      return res.status(504).json({
+        error: "Layanan AI tidak merespons dalam batas waktu. Silakan coba lagi."
+      });
+    }
     return res.status(502).json({
       error: "Layanan AI sedang tidak dapat dihubungi. Silakan coba lagi beberapa saat lagi."
     });
@@ -2179,12 +2545,20 @@ app.post("/api/chat-kitab", aiRateLimiter, async (req, res) => {
     }
   };
   const gemini = ai;
+  const requestId = getRequestId(res);
+  const clientSignal = createClientAbortSignal(res);
   try {
     const textOutput = await generateJsonWithProviderFallback({
       systemInstruction,
       responseSchema,
       userContent,
-      generateGemini: gemini ? () => gemini.models.generateContent(generationRequest) : undefined
+      operation: "chat_kitab",
+      requestId,
+      signal: clientSignal,
+      generateGemini: gemini ? (signal) => gemini.models.generateContent({
+        ...generationRequest,
+        config: { ...generationRequest.config, abortSignal: signal }
+      }) : undefined
     });
     const parsed = JSON.parse(textOutput.trim());
     const dalil = Array.isArray(parsed.dalil) ? parsed.dalil : [];
@@ -2198,7 +2572,18 @@ app.post("/api/chat-kitab", aiRateLimiter, async (req, res) => {
       dalil
     });
   } catch (error: any) {
-    console.warn("Chat kitab generation failed:", error?.status || error?.code || "", error?.message || error);
+    logEvent("warn", "ai_endpoint_error", {
+      requestId,
+      endpoint: "chat_kitab",
+      status: getErrorStatus(error),
+      timedOut: isTimeoutLikeError(error),
+      message: truncateForLog(error?.message || error)
+    });
+    if (isTimeoutLikeError(error)) {
+      return res.status(504).json({
+        error: "Layanan AI tidak merespons dalam batas waktu. Silakan coba lagi."
+      });
+    }
     if (images.length > 0) {
       return res.status(502).json({ error: "Analisis gambar gagal. Periksa keterbacaan gambar lalu coba lagi." });
     }
@@ -2242,6 +2627,8 @@ app.post("/api/voice/speak", aiRateLimiter, async (req, res) => {
     return res.status(503).json({ error: "Suara AI belum tersedia. Pastikan GEMINI_API_KEY sudah diatur." });
   }
 
+  const requestId = getRequestId(res);
+  const startedAt = Date.now();
   try {
     const arabicScript = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
     const textSegments: { text: string; isArabic: boolean }[] = [];
@@ -2270,13 +2657,14 @@ app.post("/api/voice/speak", aiRateLimiter, async (req, res) => {
         }]
       }));
 
+    const signal = AbortSignal.any([createClientAbortSignal(res), AbortSignal.timeout(AI_TIMEOUT_MS)]);
     const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "x-goog-api-key": geminiApiKey
       },
-      signal: AbortSignal.timeout(AI_TIMEOUT_MS),
+      signal,
       body: JSON.stringify({
         model: "gemini-3.8-flash-tts",
         input: [{
@@ -2310,10 +2698,20 @@ app.post("/api/voice/speak", aiRateLimiter, async (req, res) => {
     if (voiceCache.size > 100) voiceCache.clear();
     voiceCache.set(cacheKey, dataUri);
 
+    logEvent("info", "voice_speak_success", {
+      requestId,
+      durationMs: Date.now() - startedAt
+    });
     return res.json({ audioData: dataUri });
   } catch (err: any) {
-    console.warn("Gemini TTS failed:", err?.status || err?.code || "", err?.message || err);
-    const timedOut = err?.name === "TimeoutError" || err?.name === "AbortError";
+    const timedOut = isTimeoutLikeError(err);
+    logEvent("warn", "ai_endpoint_error", {
+      requestId,
+      endpoint: "voice_speak",
+      status: getErrorStatus(err),
+      timedOut,
+      message: truncateForLog(err?.message || err)
+    });
     return res.status(timedOut ? 504 : 502).json({
       error: timedOut ? "Pembuatan suara melewati batas waktu. Silakan coba lagi." : "Suara manusia belum berhasil dibuat. Silakan coba lagi."
     });
@@ -2341,6 +2739,10 @@ app.use((error: any, _req: express.Request, res: express.Response, next: express
     return res.status(status).json({ error: "Permintaan tidak valid." });
   }
 
-  console.error("Unhandled API error:", error);
+  logEvent("error", "api_unhandled_error", {
+    requestId: typeof res.locals.requestId === "string" ? res.locals.requestId : undefined,
+    name: typeof error?.name === "string" ? error.name : undefined,
+    message: truncateForLog(error?.message || error)
+  });
   return res.status(500).json({ error: "Terjadi kesalahan internal pada server." });
 });
